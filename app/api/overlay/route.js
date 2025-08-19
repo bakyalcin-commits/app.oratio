@@ -1,10 +1,9 @@
-// app/api/overlay/route.js
+// src/app/api/overlay/route.js
 import { NextResponse } from "next/server";
 import Jimp from "jimp";
 
-export const runtime = "nodejs"; // Jimp için şart
+export const runtime = "nodejs"; // Jimp için Node runtime
 
-// Basit satır kaydırma
 function wrapLines(text, maxChars) {
   if (!text) return [""];
   const words = String(text).split(/\s+/);
@@ -12,19 +11,15 @@ function wrapLines(text, maxChars) {
   let line = "";
   for (const w of words) {
     const cand = line ? line + " " + w : w;
-    if (cand.length <= maxChars) {
-      line = cand;
-    } else {
-      if (line) lines.push(line);
-      line = w;
-    }
+    if (cand.length <= maxChars) line = cand;
+    else { if (line) lines.push(line); line = w; }
   }
   if (line) lines.push(line);
   return lines;
 }
 
 export async function POST(req) {
-  const startedAt = Date.now();
+  const t0 = Date.now();
   try {
     const body = await req.json().catch(() => ({}));
     const {
@@ -37,20 +32,19 @@ export async function POST(req) {
     } = body || {};
 
     if (!imageBase64 || !Number.isFinite(width) || !Number.isFinite(height)) {
-      console.error("[overlay] Missing fields", {
-        hasImage: !!imageBase64, width, height, boxesCount: Array.isArray(boxes) ? boxes.length : "n/a",
-      });
-      return NextResponse.json({ error: "Invalid payload: image or dimensions missing" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid payload: image or dimensions missing" },
+        { status: 400 }
+      );
     }
 
-    // Base64 -> Buffer
-    const cleaned = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+    const cleaned = imageBase64.includes(",")
+      ? imageBase64.split(",")[1]
+      : imageBase64;
     const imgBuffer = Buffer.from(cleaned, "base64");
 
-    // Resmi oku
     const image = await Jimp.read(imgBuffer);
 
-    // Font seçimi (TR/EN için yeterli)
     const fontMap = {
       16: Jimp.FONT_SANS_16_BLACK,
       22: Jimp.FONT_SANS_32_BLACK,
@@ -63,32 +57,22 @@ export async function POST(req) {
 
     const PAD = 6;
 
-    if (!Array.isArray(boxes) || boxes.length === 0) {
-      console.warn("[overlay] boxes empty; returning original image without overlay");
-    }
-
-    for (const [i, b] of (boxes || []).entries()) {
+    for (const b of boxes) {
       const bx = Number.isFinite(b?.x) ? Math.round(b.x) : 0;
       const by = Number.isFinite(b?.y) ? Math.round(b.y) : 0;
       const bw = Number.isFinite(b?.w) ? Math.round(b.w) : 1;
       const bh = Number.isFinite(b?.h) ? Math.round(b.h) : 1;
-      const txt = (b?.text ?? "").toString();
-
-      if (i < 3) {
-        console.log("[overlay] box", i, { x: bx, y: by, w: bw, h: bh, sampleText: txt.slice(0, 32) });
-      }
+      const txt = (b?.text ?? "").toString().trim();
 
       const x = Math.max(0, bx - PAD);
       const y = Math.max(0, by - PAD);
       const w = Math.max(1, bw + PAD * 2);
       const h = Math.max(1, bh + PAD * 2);
 
-      // Okunabilirlik için hafif beyaz zemin
-      const rect = new Jimp(w, h, 0xFFFFFFCC);
+      const rect = new Jimp(w, h, 0xFFFFFFCC); // hafif beyaz zemin
       image.composite(rect, x, y);
 
-      // Satır kaydır, yaz
-      const lines = wrapLines(txt.trim(), Math.max(6, lineWrap));
+      const lines = wrapLines(txt, Math.max(6, lineWrap));
       let cy = y + PAD;
       for (const line of lines) {
         await image.print(font, x + PAD, cy, line, w - PAD * 2);
@@ -97,13 +81,11 @@ export async function POST(req) {
       }
     }
 
-    // Boyutu sabitle
     if (image.bitmap.width !== width || image.bitmap.height !== height) {
       image.resize(width, height);
     }
 
     const outBuffer = await image.getBufferAsync(Jimp.MIME_PNG);
-    console.log("[overlay] OK in", Date.now() - startedAt, "ms");
 
     return new Response(outBuffer, {
       status: 200,
@@ -119,13 +101,16 @@ export async function POST(req) {
       { error: "Overlay generation failed", detail: String(err?.message || err) },
       { status: 500 }
     );
+  } finally {
+    console.log("[overlay] done in", Date.now() - t0, "ms");
   }
 }
 
-// İsteğe bağlı: GET çağrısı gelirse 405 döndür (debug için net olsun)
+// İstemeden GET gelirse bilerek 405 verelim (debug için)
 export async function GET() {
   return NextResponse.json({ error: "Use POST /api/overlay" }, { status: 405 });
 }
+
 
 
 
