@@ -2,7 +2,6 @@
 
 import React from "react";
 
-// ISO dil kodları
 const LANGS = [
   { label: "English", value: "en" },
   { label: "Turkish", value: "tr" },
@@ -14,13 +13,11 @@ const LANGS = [
   { label: "Arabic", value: "ar" },
   { label: "Serbian", value: "sr" },
   { label: "Chinese", value: "zh" },
-  { label: "Japanese", value: "ja" },
+  { label: "Japanese", value: "ja" }
 ];
 
 export default function Page() {
-  const [mode, setMode] = React.useState("file"); // "text" | "file"
-
-  // shared
+  const [mode, setMode] = React.useState("file");
   const [targetLang, setTargetLang] = React.useState("en");
   const [loading, setLoading] = React.useState(false);
 
@@ -30,7 +27,7 @@ export default function Page() {
 
   // file
   const [selectedFile, setSelectedFile] = React.useState(null);
-  const [lastResult, setLastResult] = React.useState(null); // { sourceText, translatedText, detectedLang }
+  const [lastResult, setLastResult] = React.useState(null);
   const [downloadReady, setDownloadReady] = React.useState(false);
 
   async function handleTranslateText() {
@@ -44,7 +41,7 @@ export default function Page() {
       const res = await fetch("/api/translate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: inputText, target: targetLang }),
+        body: JSON.stringify({ text: inputText, target: targetLang })
       });
       const data = await res.json();
       if (res.ok) {
@@ -73,7 +70,7 @@ export default function Page() {
 
       const res = await fetch("/api/translate-file", {
         method: "POST",
-        body: fd,
+        body: fd
       });
       const data = await res.json();
 
@@ -81,7 +78,7 @@ export default function Page() {
         setLastResult({
           sourceText: data.sourceText || "",
           translatedText: data.translatedText || "",
-          detectedLang: data.detectedLang || "",
+          detectedLang: data.detectedLang || ""
         });
         setDownloadReady(true);
         alert(
@@ -100,7 +97,7 @@ export default function Page() {
     setLoading(false);
   }
 
-  function handleDownload() {
+  function handleDownloadTxt() {
     if (!lastResult) {
       alert("Nothing to download yet.");
       return;
@@ -122,13 +119,50 @@ export default function Page() {
     URL.revokeObjectURL(url);
   }
 
+  async function handleDownloadPng() {
+    if (!selectedFile) {
+      alert("Please choose a PNG/JPG file first.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", selectedFile);
+      fd.append("targetLang", targetLang);
+
+      const res = await fetch("/api/translate-image", {
+        method: "POST",
+        body: fd
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const base = (selectedFile?.name || "result").replace(/\.[^.]+$/, "");
+      a.href = url;
+      a.download = `${base}-${targetLang}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("❌ Download PNG failed: " + e.message);
+    }
+    setLoading(false);
+  }
+
   const styles = {
     page: {
       minHeight: "100vh",
       background: "#0b1220",
       color: "#eef1f7",
       fontFamily:
-        "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Ubuntu,Inter,sans-serif",
+        "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Ubuntu,Inter,sans-serif"
     },
     container: { maxWidth: 980, margin: "0 auto", padding: "28px 20px 64px" },
     top: { display: "flex", alignItems: "center", gap: 14, marginBottom: 10 },
@@ -143,14 +177,14 @@ export default function Page() {
       background: active ? "#5b6bff" : "transparent",
       color: active ? "white" : "#c9d4e6",
       cursor: "pointer",
-      fontWeight: 700,
+      fontWeight: 700
     }),
     card: {
       border: "1px solid rgba(255,255,255,0.08)",
       borderRadius: 16,
       padding: 20,
       background:
-        "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.015))",
+        "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.015))"
     },
     row: { display: "flex", alignItems: "center", gap: 12, marginBottom: 12 },
     select: {
@@ -159,7 +193,7 @@ export default function Page() {
       border: "1px solid rgba(255,255,255,0.12)",
       padding: "8px 10px",
       borderRadius: 10,
-      outline: "none",
+      outline: "none"
     },
     textarea: {
       width: "100%",
@@ -170,14 +204,14 @@ export default function Page() {
       borderRadius: 12,
       padding: 12,
       outline: "none",
-      resize: "vertical",
+      resize: "vertical"
     },
     input: {
       background: "#0f1729",
       color: "#eef1f7",
       border: "1px solid rgba(255,255,255,0.12)",
       borderRadius: 10,
-      padding: 10,
+      padding: 10
     },
     primary: {
       background: "#5b6bff",
@@ -186,7 +220,7 @@ export default function Page() {
       borderRadius: 12,
       padding: "10px 14px",
       fontWeight: 800,
-      cursor: "pointer",
+      cursor: "pointer"
     },
     ghost: {
       background: "transparent",
@@ -195,15 +229,15 @@ export default function Page() {
       borderRadius: 12,
       padding: "10px 14px",
       fontWeight: 700,
-      cursor: "pointer",
+      cursor: "pointer"
     },
     footer: {
       marginTop: 36,
       textAlign: "center",
       color: "#7d8aa6",
       fontSize: 12,
-      opacity: 0.8,
-    },
+      opacity: 0.8
+    }
   };
 
   return (
@@ -289,13 +323,11 @@ export default function Page() {
                 <input
                   type="file"
                   accept=".png,.jpg,.jpeg"
-                  onChange={(e) =>
-                    setSelectedFile(e.target.files?.[0] || null)
-                  }
+                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
                   style={styles.input}
                 />
               </div>
-              <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button
                   style={styles.primary}
                   onClick={handleFileTranslate}
@@ -305,10 +337,17 @@ export default function Page() {
                 </button>
                 <button
                   style={styles.ghost}
-                  onClick={handleDownload}
+                  onClick={handleDownloadTxt}
                   disabled={!downloadReady || !lastResult}
                 >
-                  Download Result
+                  Download Result (TXT)
+                </button>
+                <button
+                  style={styles.ghost}
+                  onClick={handleDownloadPng}
+                  disabled={!selectedFile || loading}
+                >
+                  Download PNG (overlay)
                 </button>
               </div>
 
@@ -321,7 +360,7 @@ export default function Page() {
                     <textarea
                       style={{
                         ...styles.textarea,
-                        minHeight: 140,
+                        minHeight: 140
                       }}
                       readOnly
                       value={lastResult.sourceText}
@@ -334,7 +373,7 @@ export default function Page() {
                     <textarea
                       style={{
                         ...styles.textarea,
-                        minHeight: 160,
+                        minHeight: 160
                       }}
                       readOnly
                       value={lastResult.translatedText}
@@ -351,6 +390,7 @@ export default function Page() {
     </main>
   );
 }
+
 
 
 
