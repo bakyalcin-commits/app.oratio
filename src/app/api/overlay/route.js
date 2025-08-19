@@ -1,7 +1,8 @@
+// src/app/api/overlay/route.js
 import { NextResponse } from "next/server";
 import Jimp from "jimp";
 
-export const runtime = "nodejs";
+export const runtime = "nodejs"; // Jimp için şart
 
 // Basit satır kaydırma
 function wrapLines(text, maxChars) {
@@ -54,10 +55,14 @@ export async function POST(req) {
       );
     }
 
-    const cleaned = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+    // >>> KRİTİK FIX: data URL prefix'ini temizle (Jimp saf base64 bekler)
+    const cleaned = imageBase64.replace(/^data:image\/\w+;base64,/, "");
     const imgBuffer = Buffer.from(cleaned, "base64");
+
+    // PNG/JPG'i yükle
     const image = await Jimp.read(imgBuffer);
 
+    // Font
     const fontMap = {
       16: Jimp.FONT_SANS_16_BLACK,
       22: Jimp.FONT_SANS_32_BLACK,
@@ -69,6 +74,7 @@ export async function POST(req) {
     const font = await Jimp.loadFont(fontKey);
 
     const PAD = 6;
+
     for (const b of boxes) {
       const bx = Number.isFinite(b?.x) ? Math.round(b.x) : 0;
       const by = Number.isFinite(b?.y) ? Math.round(b.y) : 0;
@@ -95,6 +101,7 @@ export async function POST(req) {
       }
     }
 
+    // Boyut sabitle
     if (image.bitmap.width !== width || image.bitmap.height !== height) {
       image.resize(width, height);
     }
@@ -118,3 +125,4 @@ export async function POST(req) {
     console.log("[overlay] done in", Date.now() - t0, "ms");
   }
 }
+
