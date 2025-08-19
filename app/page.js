@@ -5,14 +5,20 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("text");
   const [sourceText, setSourceText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
+  const [selectedFile, setSelectedFile] = useState(null);
 
   const handleTranslate = () => {
-    // Şimdilik sahte çeviri: sadece tersine çevirme simülasyonu
     if (!sourceText.trim()) {
       setTranslatedText("Please enter some text to translate.");
       return;
     }
     setTranslatedText("🔄 " + sourceText.split("").reverse().join(""));
+  };
+
+  const handleFileChange = (e) => {
+    if (e.target.files.length > 0) {
+      setSelectedFile(e.target.files[0]);
+    }
   };
 
   return (
@@ -135,8 +141,18 @@ export default function Home() {
             }}
           >
             <p>Drag & drop your file here or click to upload</p>
-            <input type="file" accept=".png,.jpg,.jpeg,.pdf" />
+            <input
+              type="file"
+              accept=".png,.jpg,.jpeg,.pdf"
+              onChange={handleFileChange}
+            />
           </div>
+
+          {selectedFile && (
+            <p>
+              ✅ Selected file: <strong>{selectedFile.name}</strong>
+            </p>
+          )}
 
           {/* Process Steps */}
           <ol style={{ marginBottom: "20px" }}>
@@ -152,6 +168,7 @@ export default function Home() {
     </main>
   );
 }
+
 
 
 
