@@ -1,6 +1,5 @@
 // app/api/translate-image/route.js
 import { NextResponse } from "next/server";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 export const runtime = "nodejs";
 
@@ -34,13 +33,7 @@ function extractLineItems(visionJson) {
     const maxY = Math.max(...ys);
     const w = Math.max(1, maxX - minX);
     const h = Math.max(1, maxY - minY);
-    res.push({
-      text: desc,
-      x: minX,
-      y: minY,
-      w,
-      h
-    });
+    res.push({ text: desc, x: minX, y: minY, w, h });
   }
   return res;
 }
@@ -48,14 +41,10 @@ function extractLineItems(visionJson) {
 // uzun array'ı parça parça çevir
 async function translateArray(strings, target, source, apiKey) {
   const out = [];
-  const batchSize = 100; // güvenli
+  const batchSize = 100;
   for (let i = 0; i < strings.length; i += batchSize) {
     const batch = strings.slice(i, i + batchSize);
-    const body = {
-      q: batch,
-      target,
-      format: "text"
-    };
+    const body = { q: batch, target, format: "text" };
     if (source && source.toLowerCase() !== target.toLowerCase()) {
       body.source = source.toLowerCase();
     }
@@ -81,6 +70,9 @@ async function translateArray(strings, target, source, apiKey) {
 
 export async function POST(req) {
   try {
+    // <-- burada dinamik import
+    const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
@@ -93,9 +85,7 @@ export async function POST(req) {
     const file = form.get("file");
     const targetLang = (form.get("targetLang") || "en").toString();
 
-    if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-    }
+    if (!file) return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     if (!["image/png", "image/jpeg", "image/jpg"].includes(file.type)) {
       return NextResponse.json(
         { error: `Unsupported file type: ${file.type}` },
@@ -117,12 +107,7 @@ export async function POST(req) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requests: [
-            {
-              image: { content: base64 },
-              features: [{ type: "TEXT_DETECTION" }]
-            }
-          ]
+          requests: [{ image: { content: base64 }, features: [{ type: "TEXT_DETECTION" }] }]
         })
       }
     );
@@ -134,31 +119,18 @@ export async function POST(req) {
 
     const lineItems = extractLineItems(visJson);
     if (!lineItems.length) {
-      // metin yoksa orijinal görseli iade
-      return new NextResponse(buf, {
-        status: 200,
-        headers: { "Content-Type": "image/png" }
-      });
+      return new NextResponse(buf, { status: 200, headers: { "Content-Type": "image/png" } });
     }
 
-    // Kaynak dil varsa yakala
-    const detectedLang =
-      visJson?.responses?.[0]?.textAnnotations?.[0]?.locale || null;
+    const detectedLang = visJson?.responses?.[0]?.textAnnotations?.[0]?.locale || null;
 
-    // ÇEVİR
+    // Çeviri
     const texts = lineItems.map((l) => l.text);
-    const translated = await translateArray(
-      texts,
-      targetLang,
-      detectedLang,
-      apiKey
-    );
+    const translated = await translateArray(texts, targetLang, detectedLang, apiKey);
 
-    // CANVAS: orijinali çiz, sonra her kutuyu beyaz kapat + içine çeviriyi bas
+    // Canvas: üzerine yaz
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
-
-    // orijinali çiz
     ctx.drawImage(img, 0, 0, width, height);
 
     ctx.fillStyle = "#ffffff";
@@ -169,14 +141,10 @@ export async function POST(req) {
       const it = lineItems[i];
       const txt = translated[i] || "";
 
-      // Önce beyazla kapat
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(it.x, it.y, it.w, it.h);
 
-      // Yazı rengi
       ctx.fillStyle = "#111111";
-
-      // Basit tek satır sığdırma: kutu yüksekliğine göre font belirle, genişliğe sığmıyorsa düşür
       let fontSize = Math.max(8, Math.floor(it.h * 0.8));
       const family = "sans-serif";
       while (fontSize > 7) {
@@ -185,8 +153,6 @@ export async function POST(req) {
         if (m.width <= it.w) break;
         fontSize -= 1;
       }
-
-      // metni kutu ortasına
       const textX = it.x + it.w / 2;
       const textY = it.y + it.h / 2;
       ctx.textAlign = "center";
@@ -194,14 +160,9 @@ export async function POST(req) {
     }
 
     const out = canvas.toBuffer("image/png");
-
     return new NextResponse(out, {
       status: 200,
-      headers: {
-        "Content-Type": "image/png",
-        // İndirme tetiklemek istersen:
-        // "Content-Disposition": `attachment; filename="translated-${targetLang}.png"`
-      }
+      headers: { "Content-Type": "image/png" }
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
