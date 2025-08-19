@@ -1,79 +1,39 @@
 /* Reset */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+*{margin:0;padding:0;box-sizing:border-box}
 
-body {
+/* Base */
+body{
   font-family: Arial, sans-serif;
-  background-color: #f9f9f9;
-  color: #333;
-  line-height: 1.6;
+  background:#f9f9f9;
+  color:#333;
+  line-height:1.6;
 }
-
-/* Layout */
-main {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 40px 20px;
-}
+main{max-width:900px;margin:0 auto;padding:40px 20px}
 
 /* Headings */
-h1 {
-  font-size: 2rem;
-  margin-bottom: 10px;
-  color: #222;
-}
-h2 {
-  font-size: 1.5rem;
-  margin-bottom: 10px;
-  color: #444;
-}
+h1{font-size:2rem;margin-bottom:10px;color:#222}
+h2{font-size:1.5rem;margin:16px 0;color:#444}
 
 /* Buttons */
-button {
-  background-color: #4f46e5;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: bold;
-  transition: background 0.2s ease;
+button{
+  background:#4f46e5;color:#fff;border:none;border-radius:6px;
+  cursor:pointer;font-weight:bold;transition:background .2s; padding:10px 20px
 }
-button:hover {
-  background-color: #4338ca;
-}
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+button:hover{background:#4338ca}
+button:disabled{opacity:.6;cursor:not-allowed}
 
 /* Inputs */
-textarea,
-select,
-input[type="file"] {
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  font-size: 1rem;
+textarea,select,input[type="file"]{
+  border:1px solid #ccc;border-radius:6px;font-size:1rem
 }
-textarea:focus,
-select:focus {
-  outline: none;
-  border-color: #4f46e5;
-  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+textarea:focus,select:focus{
+  outline:none;border-color:#4f46e5;box-shadow:0 0 0 2px rgba(79,70,229,.2)
 }
 
 /* Upload box */
-.upload-box {
-  border: 2px dashed #ccc;
-  border-radius: 8px;
-  padding: 40px;
-  text-align: center;
-  margin-bottom: 20px;
-  transition: border-color 0.2s ease;
+.upload-box{
+  border:2px dashed #ccc;border-radius:8px;padding:40px;text-align:center;margin-bottom:20px
 }
-.upload-box:hover {
-  border-color: #4f46e5;
-}
+.upload-box:hover{border-color:#4f46e5}
+
 
