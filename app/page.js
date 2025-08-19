@@ -2,7 +2,7 @@
 
 import React from "react";
 
-// Simple language options (value must be ISO code)
+// ISO dil kodları
 const LANGS = [
   { label: "English", value: "en" },
   { label: "Turkish", value: "tr" },
@@ -18,7 +18,7 @@ const LANGS = [
 ];
 
 export default function Page() {
-  const [mode, setMode] = React.useState<"text" | "file">("file");
+  const [mode, setMode] = React.useState("file"); // "text" | "file"
 
   // shared
   const [targetLang, setTargetLang] = React.useState("en");
@@ -29,12 +29,8 @@ export default function Page() {
   const [outputText, setOutputText] = React.useState("");
 
   // file
-  const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
-  const [lastResult, setLastResult] = React.useState<{
-    sourceText: string;
-    translatedText: string;
-    detectedLang?: string | null;
-  } | null>(null);
+  const [selectedFile, setSelectedFile] = React.useState(null);
+  const [lastResult, setLastResult] = React.useState(null); // { sourceText, translatedText, detectedLang }
   const [downloadReady, setDownloadReady] = React.useState(false);
 
   async function handleTranslateText() {
@@ -57,7 +53,7 @@ export default function Page() {
       } else {
         alert("❌ " + (data.error || "Translate failed"));
       }
-    } catch (e: any) {
+    } catch (e) {
       alert("❌ Server error: " + e.message);
     }
     setLoading(false);
@@ -98,7 +94,7 @@ export default function Page() {
       } else {
         alert("❌ " + (data.error || "Something went wrong"));
       }
-    } catch (e: any) {
+    } catch (e) {
       alert("❌ Server error: " + e.message);
     }
     setLoading(false);
@@ -126,7 +122,7 @@ export default function Page() {
     URL.revokeObjectURL(url);
   }
 
-  const styles: Record<string, React.CSSProperties> = {
+  const styles = {
     page: {
       minHeight: "100vh",
       background: "#0b1220",
@@ -134,31 +130,13 @@ export default function Page() {
       fontFamily:
         "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Ubuntu,Inter,sans-serif",
     },
-    container: {
-      maxWidth: 980,
-      margin: "0 auto",
-      padding: "28px 20px 64px",
-    },
-    top: {
-      display: "flex",
-      alignItems: "center",
-      gap: 14,
-      marginBottom: 10,
-    },
+    container: { maxWidth: 980, margin: "0 auto", padding: "28px 20px 64px" },
+    top: { display: "flex", alignItems: "center", gap: 14, marginBottom: 10 },
     logo: { height: 36 },
-    h1: {
-      fontSize: 24,
-      fontWeight: 800,
-      letterSpacing: 0.2,
-    },
-    sub: {
-      color: "#93a0b8",
-      marginTop: 2,
-      marginBottom: 14,
-      fontSize: 14,
-    },
+    h1: { fontSize: 24, fontWeight: 800, letterSpacing: 0.2 },
+    sub: { color: "#93a0b8", marginTop: 2, marginBottom: 14, fontSize: 14 },
     tabs: { display: "flex", gap: 8, marginBottom: 18 },
-    tab: (active: boolean): React.CSSProperties => ({
+    tab: (active) => ({
       padding: "10px 14px",
       borderRadius: 10,
       border: "1px solid rgba(255,255,255,0.08)",
@@ -342,4 +320,5 @@ export default function Page() {
     </main>
   );
 }
+
 
