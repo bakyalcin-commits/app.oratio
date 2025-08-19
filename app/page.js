@@ -6,6 +6,7 @@ export default function Home() {
   const [sourceText, setSourceText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
 
   const handleTranslate = () => {
     if (!sourceText.trim()) {
@@ -17,7 +18,14 @@ export default function Home() {
 
   const handleFileChange = (e) => {
     if (e.target.files.length > 0) {
-      setSelectedFile(e.target.files[0]);
+      const file = e.target.files[0];
+      setSelectedFile(file);
+
+      if (file.type.startsWith("image/")) {
+        setPreviewUrl(URL.createObjectURL(file));
+      } else {
+        setPreviewUrl(null);
+      }
     }
   };
 
@@ -149,9 +157,24 @@ export default function Home() {
           </div>
 
           {selectedFile && (
-            <p>
-              ✅ Selected file: <strong>{selectedFile.name}</strong>
-            </p>
+            <div style={{ marginBottom: "20px" }}>
+              <p>
+                ✅ Selected file: <strong>{selectedFile.name}</strong>
+              </p>
+              {previewUrl && (
+                <img
+                  src={previewUrl}
+                  alt="Preview"
+                  style={{
+                    maxWidth: "300px",
+                    maxHeight: "200px",
+                    border: "1px solid #ccc",
+                    borderRadius: "6px",
+                    marginTop: "10px",
+                  }}
+                />
+              )}
+            </div>
           )}
 
           {/* Process Steps */}
@@ -168,6 +191,7 @@ export default function Home() {
     </main>
   );
 }
+
 
 
 
