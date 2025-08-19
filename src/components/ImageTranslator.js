@@ -1,18 +1,14 @@
 // src/components/ImageTranslator.js
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { downloadOverlayPNG } from "@/lib/downloadOverlay";
 
 /**
- * Bu bileşen, "Download PNG (overlay)" butonunu sunar.
- * Gerekli verileri üst bileşenden props ile alır:
- *  - originalImageBase64: upload edilen orijinal görselin base64'ü ("data:image/png;base64,...")
- *  - translatedBoxes: [{ x, y, w, h, text }]  1px = orijinal görsel pikseli
- *  - originalWidth, originalHeight: orijinal görselin boyutları
- *
- * Not: Eğer bu değerleri hâlihazırda component içinde state olarak tutuyorsan,
- * props kullanmak yerine ilgili state değişkenlerini aşağıdaki handler'da geçirmen yeterli.
+ * GEREKEN PROPS:
+ *  - originalImageBase64: "data:image/png;base64,..." (upload sonrası sakla)
+ *  - translatedBoxes: [{ x, y, w, h, text }] -> text ÇEVRİLMİŞ metin olmalı
+ *  - originalWidth, originalHeight: orijinal görselin doğal boyutu
  */
 export default function ImageTranslator({
   originalImageBase64,
@@ -23,9 +19,24 @@ export default function ImageTranslator({
 }) {
   const [isDownloading, setIsDownloading] = useState(false);
 
+  const disabled = useMemo(() => {
+    return (
+      isDownloading ||
+      !originalImageBase64 ||
+      !Array.isArray(translatedBoxes) ||
+      translatedBoxes.length === 0 ||
+      !Number.isFinite(originalWidth) ||
+      !Number.isFinite(originalHeight)
+    );
+  }, [isDownloading, originalImageBase64, translatedBoxes, originalWidth, originalHeight]);
+
   async function handleDownloadOverlay() {
     try {
       setIsDownloading(true);
+
+      // Debug: ilk 2 kutuyu logla
+      console.debug("[overlay] front boxes sample:", (translatedBoxes || []).slice(0, 2));
+
       await downloadOverlayPNG({
         imageBase64: originalImageBase64,
         boxes: translatedBoxes,
@@ -37,40 +48,30 @@ export default function ImageTranslator({
       });
     } catch (e) {
       const msg = e?.message || "Overlay generation failed";
-      // Burada UI'na uygun bir bildirim de kullanabilirsin
+      console.error("[overlay] client error:", msg);
       alert(`Download PNG failed: ${msg}`);
     } finally {
       setIsDownloading(false);
     }
   }
 
-  const disabled =
-    isDownloading ||
-    !originalImageBase64 ||
-    !translatedBoxes ||
-    !translatedBoxes.length ||
-    !originalWidth ||
-    !originalHeight;
-
   return (
     <div className={`flex items-center gap-8 ${className}`}>
       <button
         type="button"
-        onClick={handleDownloadOverlay}
         disabled={disabled}
-        className={`px-4 py-2 rounded-md border text-sm
-          ${disabled ? "opacity-60 cursor-not-allowed" : "hover:opacity-90"}`}
-        title="Download PNG (overlay)"
+        onClick={handleDownloadOverlay}
+        className={`px-4 py-2 rounded-md border text-sm ${disabled ? "opacity-60 cursor-not-allowed" : "hover:opacity-90"}`}
       >
         {isDownloading ? "Processing..." : "Download PNG (overlay)"}
       </button>
 
-      {/* Durum bilgisi (opsiyonel) */}
-      <div className="text-xs opacity-75">
+      <div className="text-xs opacity-70">
         {disabled
-          ? "Overlay için gerekli veri bekleniyor."
+          ? "Overlay için veri bekleniyor (görsel, boyutlar, kutular)."
           : "İndirmeye hazır."}
       </div>
     </div>
   );
 }
+
