@@ -1,150 +1,45 @@
 // app/api/overlay/route.js
 import { NextResponse } from "next/server";
-
-export const runtime = "nodejs"; // Jimp için Node runtime şart
-
-// Basit kelime bazlı satır kaydırma
-function wrapLines(text, maxChars) {
-  if (!text) return [""];
-  const words = String(text).split(/\s+/);
-  const lines = [];
-  let line = "";
-  for (const w of words) {
-    const candidate = line ? line + " " + w : w;
-    if (candidate.length <= maxChars) {
-      line = candidate;
-    } else {
-      if (line) lines.push(line);
-      line = w;
-    }
-  }
-  if (line) lines.push(line);
-  return lines;
-}
+import Jimp from "jimp";
 
 export async function POST(req) {
-  const startedAt = Date.now();
   try {
-    const body = await req.json().catch(() => ({}));
-    const keys = body && typeof body === "object" ? Object.keys(body) : [];
-    console.log("[overlay] Incoming keys:", keys);
+    const body = await req.json();
+    const { imageBase64, boxes, width, height, fontPx = 22, lineWrap = 30 } = body;
 
-    const {
-      imageBase64,
-      boxes = [],
-      width,
-      height,
-      fontPx = 22,
-      lineWrap = 30,
-    } = body || {};
-
-    if (!imageBase64 || !width || !height) {
-      console.error("[overlay] Missing fields", {
-        hasImage: !!imageBase64,
-        width,
-        height,
-        boxesCount: Array.isArray(boxes) ? boxes.length : "n/a",
-      });
-      return NextResponse.json(
-        { error: "Missing image or dimensions" },
-        { status: 400 }
-      );
+    if (!imageBase64 || !boxes || !Array.isArray(boxes)) {
+      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    const jimpImport = await import("jimp");
-    const Jimp = jimpImport.default || jimpImport;
-    if (!Jimp?.read) {
-      console.error("[overlay] Jimp not loaded correctly:", Object.keys(jimpImport));
-      return NextResponse.json(
-        { error: "Image engine load failed" },
-        { status: 500 }
-      );
-    }
-    console.log("[overlay] Jimp loaded");
+    // Base64 -> Buffer
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
 
-    // Base64 temizle
-    const cleaned = imageBase64.includes(",")
-      ? imageBase64.split(",")[1]
-      : imageBase64;
+    // Jimp ile resmi yükle
+    const image = await Jimp.read(buffer);
 
-    const imgBuffer = Buffer.from(cleaned, "base64");
-    const image = await Jimp.read(imgBuffer);
-    console.log("[overlay] Image read:", image.bitmap.width, image.bitmap.height);
+    // Font yükle (Jimp default)
+    const font = await Jimp.loadFont(Jimp.FONT_SANS_16_BLACK);
 
-    // Font seçimi (TR/EN için yeterli)
-    const fontMap = {
-      16: Jimp.FONT_SANS_16_BLACK,
-      22: Jimp.FONT_SANS_32_BLACK,
-      28: Jimp.FONT_SANS_32_BLACK,
-      32: Jimp.FONT_SANS_32_BLACK,
-      36: Jimp.FONT_SANS_64_BLACK,
-    };
-    const fontKey = fontMap[fontPx] || Jimp.FONT_SANS_32_BLACK;
-    const font = await Jimp.loadFont(fontKey);
-
-    const PAD = 6;
-
-    // Kutular yoksa yine de orijinali döndür
-    if (!Array.isArray(boxes) || boxes.length === 0) {
-      console.warn("[overlay] boxes empty; returning original with no overlay");
-    }
-
-    for (const [i, b] of (boxes || []).entries()) {
-      // Tüm alanları güvene al
-      const bx = Number.isFinite(b?.x) ? Math.round(b.x) : 0;
-      const by = Number.isFinite(b?.y) ? Math.round(b.y) : 0;
-      const bw = Number.isFinite(b?.w) ? Math.round(b.w) : 1;
-      const bh = Number.isFinite(b?.h) ? Math.round(b.h) : 1;
-      const txt = (b?.text ?? "").toString();
-
-      if (i < 3) {
-        console.log("[overlay] box", i, { x: bx, y: by, w: bw, h: bh, sampleText: txt.slice(0, 32) });
-      }
-
-      const x = Math.max(0, bx - PAD);
-      const y = Math.max(0, by - PAD);
-      const w = Math.max(1, bw + PAD * 2);
-      const h = Math.max(1, bh + PAD * 2);
-
-      // Arka planı hafif beyazlat
-      const rect = new Jimp(w, h, 0xFFFFFFCC); // CC ~ 80% opak
-      image.composite(rect, x, y);
-
-      // Satır kaydır ve yaz
-      const lines = wrapLines(txt.trim(), Math.max(6, lineWrap));
-      let cy = y + PAD;
-      for (const line of lines) {
-        await image.print(font, x + PAD, cy, line, w - PAD * 2);
-        cy += fontPx + 6;
-        if (cy > y + h - PAD) break;
-      }
-    }
-
-    // Boyut tutarlılığı
-    if (image.bitmap.width !== width || image.bitmap.height !== height) {
-      console.log("[overlay] resizing from", image.bitmap, "to", width, height);
-      image.resize(width, height);
-    }
+    // Kutulara çevirilmiş text yaz
+    boxes.forEach(({ x, y, text }) => {
+      if (!text) return;
+      image.print(font, x, y, text, width);
+    });
 
     const outBuffer = await image.getBufferAsync(Jimp.MIME_PNG);
-    console.log("[overlay] done in", Date.now() - startedAt, "ms");
 
     return new Response(outBuffer, {
-      status: 200,
       headers: {
         "Content-Type": "image/png",
-        "Content-Disposition": 'attachment; filename="translated-overlay.png"',
-        "Cache-Control": "no-store",
+        "Content-Disposition": "attachment; filename=translated-overlay.png",
       },
     });
   } catch (err) {
-    console.error("[overlay] FAILED:", err?.stack || err?.message || err);
-    // Hata mesajını client’a geçiriyoruz ki popup boş kalmasın
-    return NextResponse.json(
-      { error: "Overlay generation failed", detail: String(err?.message || err) },
-      { status: 500 }
-    );
+    console.error("Overlay API error:", err);
+    return NextResponse.json({ error: "Overlay generation failed" }, { status: 500 });
   }
 }
+
 
 
