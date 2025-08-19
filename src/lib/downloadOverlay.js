@@ -8,7 +8,7 @@ export async function downloadOverlayPNG({
   lineWrap = 30,
   filename = "translated-overlay.png",
 }) {
-  if (!imageBase64 || !width || !height) {
+  if (!imageBase64 || !Number.isFinite(width) || !Number.isFinite(height)) {
     throw new Error("Image or dimensions missing on client");
   }
   if (!Array.isArray(boxes)) {
@@ -17,13 +17,6 @@ export async function downloadOverlayPNG({
 
   const payload = { imageBase64, boxes, width, height, fontPx, lineWrap };
 
-  console.debug("[overlay] sending to /api/overlay", {
-    hasImage: !!imageBase64,
-    width,
-    height,
-    boxesCount: boxes.length,
-  });
-
   const res = await fetch("/api/overlay", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -31,10 +24,10 @@ export async function downloadOverlayPNG({
   });
 
   if (!res.ok) {
-    let msg = "Overlay generation failed";
+    let msg = `HTTP ${res.status}`;
     try {
       const j = await res.json();
-      if (j?.error) msg = j.error + (j?.detail ? ` (${j.detail})` : "");
+      if (j?.error) msg = `${j.error}${j?.detail ? ` (${j.detail})` : ""}`;
     } catch {}
     throw new Error(msg);
   }
@@ -49,5 +42,6 @@ export async function downloadOverlayPNG({
   a.remove();
   URL.revokeObjectURL(url);
 }
+
 
 
