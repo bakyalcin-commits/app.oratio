@@ -5,17 +5,41 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("text");
   const [sourceText, setSourceText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
+  const [targetLang, setTargetLang] = useState("en");
+
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [downloadReady, setDownloadReady] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleTranslate = () => {
+  // REAL Google Translate call via /api/translate
+  const handleTranslate = async () => {
     if (!sourceText.trim()) {
       setTranslatedText("Please enter some text to translate.");
       return;
     }
-    setTranslatedText("🔄 " + sourceText.split("").reverse().join(""));
+
+    try {
+      setTranslatedText("⏳ Translating...");
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: sourceText,
+          targetLang
+        })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setTranslatedText(data.translatedText || "");
+      } else {
+        setTranslatedText("❌ Error: " + (data.error || "Translation failed"));
+      }
+    } catch (err) {
+      setTranslatedText("❌ Server error: " + err.message);
+    }
   };
 
   const handleFileChange = (e) => {
@@ -33,6 +57,7 @@ export default function Home() {
     }
   };
 
+  // Fake file translate for now (spinner + download button after 2s)
   const handleFakeFileTranslate = () => {
     if (!selectedFile) return;
     setLoading(true);
@@ -95,7 +120,11 @@ export default function Home() {
             <label style={{ display: "block", marginBottom: "6px" }}>
               Target Language
             </label>
-            <select style={{ padding: "10px", width: "200px" }}>
+            <select
+              style={{ padding: "10px", width: "200px" }}
+              value={targetLang}
+              onChange={(e) => setTargetLang(e.target.value)}
+            >
               <option value="en">English</option>
               <option value="tr">Turkish</option>
               <option value="fr">French</option>
@@ -222,12 +251,8 @@ export default function Home() {
               />
               <style jsx>{`
                 @keyframes spin {
-                  0% {
-                    transform: rotate(0deg);
-                  }
-                  100% {
-                    transform: rotate(360deg);
-                  }
+                  0% { transform: rotate(0deg); }
+                  100% { transform: rotate(360deg); }
                 }
               `}</style>
             </div>
@@ -255,4 +280,5 @@ export default function Home() {
     </main>
   );
 }
+
 
