@@ -11,19 +11,57 @@ export default function Home() {
         <h1>Oratio App • Medical Translate</h1>
       </header>
 
-      {/* Tabs */}
-      <section style={{ marginBottom: "30px", textAlign: "center" }}>
-        <button style={{ padding: "10px 20px", marginRight: "10px" }}>
-          Translate Text
-        </button>
-        <button style={{ padding: "10px 20px" }}>Translate File</button>
-      </section>
+      {/* Translate Text Section */}
+      <section style={{ marginBottom: "40px" }}>
+        <h2 style={{ marginBottom: "20px" }}>Translate Text</h2>
 
-      {/* Content placeholder */}
-      <section style={{ textAlign: "center" }}>
-        <p>Select a tab above to start translating.</p>
+        {/* Target Language */}
+        <div style={{ marginBottom: "20px" }}>
+          <label style={{ display: "block", marginBottom: "6px" }}>
+            Target Language
+          </label>
+          <select style={{ padding: "10px", width: "200px" }}>
+            <option value="en">English</option>
+            <option value="tr">Turkish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="es">Spanish</option>
+            <option value="ru">Russian</option>
+            <option value="ar">Arabic</option>
+            <option value="sr">Serbian</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+          </select>
+        </div>
+
+        {/* Source Text */}
+        <div style={{ marginBottom: "20px" }}>
+          <label style={{ display: "block", marginBottom: "6px" }}>
+            Source Text
+          </label>
+          <textarea
+            placeholder="Enter your text here..."
+            style={{ width: "100%", height: "150px", padding: "10px" }}
+          ></textarea>
+        </div>
+
+        {/* Output */}
+        <div style={{ marginBottom: "20px" }}>
+          <label style={{ display: "block", marginBottom: "6px" }}>
+            Translated Text
+          </label>
+          <textarea
+            readOnly
+            placeholder="Translation will appear here..."
+            style={{ width: "100%", height: "150px", padding: "10px", background: "#f0f0f0" }}
+          ></textarea>
+        </div>
+
+        <button style={{ padding: "12px 24px" }}>TRANSLATE</button>
       </section>
     </main>
   );
 }
+
 
