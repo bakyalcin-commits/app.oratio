@@ -1,230 +1,143 @@
-// app/api/translate-image/route.js
-import { NextResponse } from "next/server";
-
 export const runtime = "nodejs";
 
-/* ------------------------ dynamic Jimp loader ------------------------ */
-let __Jimp = null;
-async function getJimp() {
-  if (!__Jimp) {
-    const mod = await import("jimp");
-    __Jimp = mod.default || mod;
-  }
-  return __Jimp;
-}
+import { NextResponse } from "next/server";
 
-/* ------------------------ helpers ------------------------ */
-
-function decodeHtml(html) {
-  if (!html) return "";
-  return html
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#x2F;/g, "/");
-}
-
-// Vision textAnnotations -> word-level boxes
-function extractLineItems(visionJson) {
-  const res = [];
-  const anns = visionJson?.responses?.[0]?.textAnnotations || [];
-  if (anns.length <= 1) return res;
-  for (let i = 1; i < anns.length; i++) {
-    const a = anns[i];
-    const desc = (a.description || "").trim();
-    const verts = a.boundingPoly?.vertices || [];
-    const xs = verts.map((v) => v.x || 0);
-    const ys = verts.map((v) => v.y || 0);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const w = Math.max(1, maxX - minX);
-    const h = Math.max(1, maxY - minY);
-    res.push({ text: desc, x: minX, y: minY, w, h });
-  }
-  return res;
-}
-
-// Translate v2 batch
-async function translateArray(strings, target, source, apiKey) {
-  const out = [];
-  const batchSize = 100;
-  for (let i = 0; i < strings.length; i += batchSize) {
-    const batch = strings.slice(i, i + batchSize);
-    const body = { q: batch, target, format: "text" };
-    if (source && source.toLowerCase() !== target.toLowerCase()) {
-      body.source = source.toLowerCase();
-    }
-    const resp = await fetch(
-      `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }
-    );
-    const data = await resp.json();
-    if (!resp.ok || data.error) {
-      throw new Error(data.error?.message || "Translate failed");
-    }
-    const arr = (data.data?.translations || []).map((t) =>
-      decodeHtml(t.translatedText || "")
-    );
-    out.push(...arr);
-  }
-  return out;
-}
-
-function getFontTable(Jimp) {
-  return [
-    { key: "FONT_SANS_8_BLACK", h: 10 },
-    { key: "FONT_SANS_12_BLACK", h: 14 },
-    { key: "FONT_SANS_16_BLACK", h: 18 },
-    { key: "FONT_SANS_32_BLACK", h: 34 },
-    { key: "FONT_SANS_64_BLACK", h: 66 },
-    { key: "FONT_SANS_128_BLACK", h: 130 },
-  ];
-}
-
-async function loadFonts(Jimp) {
-  if (globalThis.__ORATIO_FONTS__) return globalThis.__ORATIO_FONTS__;
-  const table = getFontTable(Jimp);
-  const map = new Map();
-  for (const f of table) {
-    const font = await Jimp.loadFont(Jimp[f.key]);
-    map.set(f.key, font);
-  }
-  globalThis.__ORATIO_FONTS__ = map;
-  return map;
-}
-
-function pickFontKey(boxH, Jimp) {
-  const table = getFontTable(Jimp);
-  let chosen = table[0].key;
-  for (const f of table) {
-    if (boxH >= f.h) chosen = f.key;
-  }
-  return chosen;
-}
-
-/* ------------------------ route ------------------------ */
-
+/**
+ * İstek gövdesi (JSON):
+ * {
+ *   imageBase64: "data:image/png;base64,...."  // veya jpg
+ *   translatedText: "Çevrilmiş metin burada..."
+ * }
+ */
 export async function POST(req) {
   try {
-    const apiKey = process.env.GOOGLE_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "Missing GOOGLE_API_KEY" },
-        { status: 500 }
-      );
-    }
+    const { imageBase64, translatedText } = await req.json();
 
-    const form = await req.formData();
-    const file = form.get("file");
-    const targetLang = (form.get("targetLang") || "en").toString();
-
-    if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-    }
-    if (!["image/png", "image/jpeg", "image/jpg"].includes(file.type)) {
+    if (!imageBase64 || !translatedText) {
       return NextResponse.json(
-        { error: `Unsupported file type: ${file.type}` },
+        { error: "imageBase64 ve translatedText zorunludur." },
         { status: 400 }
       );
     }
 
-    // Görseli oku
-    const buf = Buffer.from(await file.arrayBuffer());
+    // Jimp ESM olduğu için dinamik import
+    const { default: Jimp } = await import("jimp");
 
-    // OCR
-    const base64 = buf.toString("base64");
-    const visRes = await fetch(
-      `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requests: [
-            { image: { content: base64 }, features: [{ type: "TEXT_DETECTION" }] },
-          ],
-        }),
+    // Base64’ü buffer’a çevir
+    const base64 = imageBase64.includes(",")
+      ? imageBase64.split(",")[1]
+      : imageBase64;
+    const imgBuf = Buffer.from(base64, "base64");
+
+    // Görseli aç
+    const image = await Jimp.read(imgBuf);
+    const { width: W, height: H } = image.bitmap;
+
+    // ----- FONT SEÇİMİ -----
+    // Jimp’in gömülü font sabitleri (dosya yolu yok!)
+    const fontEntries = [
+      { key: Jimp.FONT_SANS_32_BLACK, lineH: 36 },
+      { key: Jimp.FONT_SANS_16_BLACK, lineH: 20 },
+      { key: Jimp.FONT_SANS_8_BLACK, lineH: 12 },
+    ];
+
+    // Metni sığdırmak için önce 32, olmazsa 16, sonra 8 dene
+    let chosen = null;
+    for (const f of fontEntries) {
+      const fnt = await Jimp.loadFont(f.key);
+      // kabaca 0.9W genişliğe sığacak max satır genişliği
+      const maxWidth = Math.floor(W * 0.9);
+      // tek satır genişliği ölçümü için en uzun satırı baz almak mantıklı
+      const lines = translatedText.split(/\r?\n/);
+      const longest = lines.reduce((a, b) => (a.length > b.length ? a : b), "");
+      const m = Jimp.measureText(fnt, longest);
+      if (m <= maxWidth) {
+        chosen = { font: fnt, lineH: f.lineH };
+        break;
       }
-    );
-    const visJson = await visRes.json();
-    if (!visRes.ok || visJson.error) {
-      const msg = visJson.error?.message || "Vision OCR failed";
-      return NextResponse.json({ error: msg }, { status: 400 });
+      // sığmadıysa bir sonrakine geç
+    }
+    // hiçbiri olmadıysa en küçük font
+    if (!chosen) {
+      const fnt = await Jimp.loadFont(Jimp.FONT_SANS_8_BLACK);
+      chosen = { font: fnt, lineH: 12 };
     }
 
-    const lineItems = extractLineItems(visJson);
-    if (!lineItems.length) {
-      // metin yoksa orijinali döndür
-      return new NextResponse(buf, {
-        status: 200,
-        headers: { "Content-Type": "image/png" },
-      });
+    // ----- METİN KUTUSU / ARKAPLAN -----
+    // Kenarlardan boşluk
+    const PAD_X = Math.floor(W * 0.05); // %5
+    const PAD_Y = Math.floor(H * 0.05); // %5
+    const BOX_W = W - PAD_X * 2;
+
+    // Metni satırlara böl (kelime kırma)
+    const softWrap = (text, font, maxWidth) => {
+      const words = text.replace(/\r/g, "").split(/\n| /);
+      const rows = [];
+      let row = "";
+
+      for (const w of words) {
+        const tentative = row ? row + (w === "\n" ? "" : " " + w) : w;
+        const meas = Jimp.measureText(font, tentative);
+        if (w === "\n") {
+          rows.push(row);
+          row = "";
+          continue;
+        }
+        if (meas <= maxWidth) {
+          row = tentative;
+        } else {
+          if (row) rows.push(row);
+          row = w; // yeni satıra başla
+        }
+      }
+      if (row) rows.push(row);
+      return rows;
+    };
+
+    const rows = [];
+    translatedText.split(/\r?\n/).forEach((paragraph, idx) => {
+      const r = softWrap(paragraph, chosen.font, BOX_W);
+      rows.push(...r);
+      if (idx !== translatedText.split(/\r?\n/).length - 1) rows.push(""); // boş satır
+    });
+
+    const textHeight = rows.length * chosen.lineH;
+    const BOX_H = textHeight + PAD_Y * 2;
+
+    // Yarı saydam arka plan kutusu
+    const overlay = new Jimp(W, BOX_H, 0x00000080); // siyah %50
+    image.composite(overlay, 0, H - BOX_H); // altta
+
+    // ----- METNİ YAZ -----
+    const startY = H - BOX_H + PAD_Y;
+    let y = startY;
+    for (const line of rows) {
+      image.print(chosen.font, PAD_X, y, line, BOX_W);
+      y += chosen.lineH;
     }
 
-    const detectedLang =
-      visJson?.responses?.[0]?.textAnnotations?.[0]?.locale || null;
-
-    // Çeviri
-    const strings = lineItems.map((l) => l.text);
-    const translated = await translateArray(
-      strings,
-      targetLang,
-      detectedLang,
-      apiKey
-    );
-
-    // Overlay: Jimp (dinamik)
-    const Jimp = await getJimp();
-    const image = await Jimp.read(buf);
-    const fonts = await loadFonts(Jimp);
-
-    // Her kutuyu beyaza boya, metni ortalı yaz
-    for (let i = 0; i < lineItems.length; i++) {
-      const it = lineItems[i];
-      const txt = translated[i] || "";
-
-      // Arka planı beyaz doldur
-      image.scan(it.x, it.y, it.w, it.h, function (x, y, idx) {
-        this.bitmap.data[idx + 0] = 255;
-        this.bitmap.data[idx + 1] = 255;
-        this.bitmap.data[idx + 2] = 255;
-        this.bitmap.data[idx + 3] = 255;
-      });
-
-      const fontKey = pickFontKey(it.h, Jimp);
-      const font = fonts.get(fontKey);
-
-      image.print(
-        font,
-        it.x,
-        it.y,
-        {
-          text: txt,
-          alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
-          alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE,
-        },
-        it.w,
-        it.h
-      );
-    }
-
+    // PNG buffer
     const out = await image.getBufferAsync(Jimp.MIME_PNG);
     return new NextResponse(out, {
       status: 200,
-      headers: { "Content-Type": "image/png" },
+      headers: {
+        "Content-Type": "image/png",
+        "Content-Disposition": 'attachment; filename="oratio-overlay.png"',
+        "Cache-Control": "no-store",
+      },
     });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Overlay generation failed",
+        message: String(err && err.message ? err.message : err),
+      },
+      { status: 500 }
+    );
+    // not: hata popup'ında görünecek
   }
 }
+
 
 
 
