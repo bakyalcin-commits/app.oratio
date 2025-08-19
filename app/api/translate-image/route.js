@@ -1,8 +1,17 @@
 // app/api/translate-image/route.js
 import { NextResponse } from "next/server";
-import Jimp from "jimp"; // pure JS, Vercel uyumlu
 
 export const runtime = "nodejs";
+
+/* ------------------------ dynamic Jimp loader ------------------------ */
+let __Jimp = null;
+async function getJimp() {
+  if (!__Jimp) {
+    const mod = await import("jimp");
+    __Jimp = mod.default || mod;
+  }
+  return __Jimp;
+}
 
 /* ------------------------ helpers ------------------------ */
 
@@ -18,7 +27,7 @@ function decodeHtml(html) {
     .replace(/&#x2F;/g, "/");
 }
 
-// Vision textAnnotations -> satır benzeri kutular
+// Vision textAnnotations -> word-level boxes
 function extractLineItems(visionJson) {
   const res = [];
   const anns = visionJson?.responses?.[0]?.textAnnotations || [];
@@ -70,22 +79,22 @@ async function translateArray(strings, target, source, apiKey) {
   return out;
 }
 
-/* Jimp bitmap fontları: boyutlar sabit; kutu yüksekliğine göre
-   en yakın fontu seçiyoruz. */
-const FONT_SIZES = [
-  { key: "FONT_SANS_8_BLACK", h: 10 },
-  { key: "FONT_SANS_12_BLACK", h: 14 },
-  { key: "FONT_SANS_16_BLACK", h: 18 },
-  { key: "FONT_SANS_32_BLACK", h: 34 },
-  { key: "FONT_SANS_64_BLACK", h: 66 },
-  { key: "FONT_SANS_128_BLACK", h: 130 },
-];
+function getFontTable(Jimp) {
+  return [
+    { key: "FONT_SANS_8_BLACK", h: 10 },
+    { key: "FONT_SANS_12_BLACK", h: 14 },
+    { key: "FONT_SANS_16_BLACK", h: 18 },
+    { key: "FONT_SANS_32_BLACK", h: 34 },
+    { key: "FONT_SANS_64_BLACK", h: 66 },
+    { key: "FONT_SANS_128_BLACK", h: 130 },
+  ];
+}
 
-async function loadFonts() {
-  // cache’leyelim
+async function loadFonts(Jimp) {
   if (globalThis.__ORATIO_FONTS__) return globalThis.__ORATIO_FONTS__;
+  const table = getFontTable(Jimp);
   const map = new Map();
-  for (const f of FONT_SIZES) {
+  for (const f of table) {
     const font = await Jimp.loadFont(Jimp[f.key]);
     map.set(f.key, font);
   }
@@ -93,10 +102,10 @@ async function loadFonts() {
   return map;
 }
 
-function pickFontKey(boxH) {
-  // kutu yüksekliğine uygun en yakın küçük fontu bul
-  let chosen = FONT_SIZES[0].key;
-  for (const f of FONT_SIZES) {
+function pickFontKey(boxH, Jimp) {
+  const table = getFontTable(Jimp);
+  let chosen = table[0].key;
+  for (const f of table) {
     if (boxH >= f.h) chosen = f.key;
   }
   return chosen;
@@ -172,28 +181,27 @@ export async function POST(req) {
       apiKey
     );
 
-    // Overlay: Jimp ile
+    // Overlay: Jimp (dinamik)
+    const Jimp = await getJimp();
     const image = await Jimp.read(buf);
-    const fonts = await loadFonts();
+    const fonts = await loadFonts(Jimp);
 
-    // Her kutuyu beyaza boya, metni ortala yaz
+    // Her kutuyu beyaza boya, metni ortalı yaz
     for (let i = 0; i < lineItems.length; i++) {
       const it = lineItems[i];
       const txt = translated[i] || "";
 
       // Arka planı beyaz doldur
       image.scan(it.x, it.y, it.w, it.h, function (x, y, idx) {
-        this.bitmap.data[idx + 0] = 255; // R
-        this.bitmap.data[idx + 1] = 255; // G
-        this.bitmap.data[idx + 2] = 255; // B
-        this.bitmap.data[idx + 3] = 255; // A
+        this.bitmap.data[idx + 0] = 255;
+        this.bitmap.data[idx + 1] = 255;
+        this.bitmap.data[idx + 2] = 255;
+        this.bitmap.data[idx + 3] = 255;
       });
 
-      // Uygun fontu seç
-      const fontKey = pickFontKey(it.h);
+      const fontKey = pickFontKey(it.h, Jimp);
       const font = fonts.get(fontKey);
 
-      // metni kutu içine ortala
       image.print(
         font,
         it.x,
@@ -217,5 +225,6 @@ export async function POST(req) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
 
 
