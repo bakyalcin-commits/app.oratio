@@ -8,6 +8,7 @@ export default function Home() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [downloadReady, setDownloadReady] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleTranslate = () => {
     if (!sourceText.trim()) {
@@ -21,7 +22,8 @@ export default function Home() {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
       setSelectedFile(file);
-      setDownloadReady(false); // yeni dosya seçilince eski linki sıfırla
+      setDownloadReady(false);
+      setLoading(false);
 
       if (file.type.startsWith("image/")) {
         setPreviewUrl(URL.createObjectURL(file));
@@ -33,8 +35,11 @@ export default function Home() {
 
   const handleFakeFileTranslate = () => {
     if (!selectedFile) return;
-    // Sahte 2 saniyelik bekleme
+    setLoading(true);
+    setDownloadReady(false);
+
     setTimeout(() => {
+      setLoading(false);
       setDownloadReady(true);
     }, 2000);
   };
@@ -195,9 +200,38 @@ export default function Home() {
             <li>Download Result</li>
           </ol>
 
-          <button style={{ padding: "12px 24px" }} onClick={handleFakeFileTranslate}>
-            TRANSLATE FILE
-          </button>
+          {!loading && !downloadReady && (
+            <button style={{ padding: "12px 24px" }} onClick={handleFakeFileTranslate}>
+              TRANSLATE FILE
+            </button>
+          )}
+
+          {loading && (
+            <div style={{ marginTop: "20px" }}>
+              <p>⏳ Processing your file...</p>
+              <div
+                style={{
+                  margin: "10px auto",
+                  border: "4px solid #f3f3f3",
+                  borderTop: "4px solid #4f46e5",
+                  borderRadius: "50%",
+                  width: "36px",
+                  height: "36px",
+                  animation: "spin 1s linear infinite",
+                }}
+              />
+              <style jsx>{`
+                @keyframes spin {
+                  0% {
+                    transform: rotate(0deg);
+                  }
+                  100% {
+                    transform: rotate(360deg);
+                  }
+                }
+              `}</style>
+            </div>
+          )}
 
           {downloadReady && (
             <div style={{ marginTop: "20px" }}>
@@ -221,3 +255,4 @@ export default function Home() {
     </main>
   );
 }
+
