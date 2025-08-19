@@ -1,75 +1,9 @@
 // app/api/translate-file/route.js
 import { NextResponse } from "next/server";
-import { ImageAnnotatorClient } from "@google-cloud/vision";
 
 export const runtime = "nodejs";
 
-/** PRIVATE KEY'i normalize et (literal \n → gerçek newline, tırnak/CRLF/base64 vs) */
-function sanitizePrivateKey(pk) {
-  if (!pk) return pk;
-
-  // string tırnakları yanlışlıkla dahil edildiyse sök
-  if (
-    (pk.startsWith('"') && pk.endsWith('"')) ||
-    (pk.startsWith("'") && pk.endsWith("'"))
-  ) {
-    pk = pk.slice(1, -1);
-  }
-
-  // literal \n, \r -> gerçek newline/CR
-  pk = pk.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
-
-  // Windows CRLF normalize
-  pk = pk.replace(/\r\n/g, "\n").trim();
-
-  // BEGIN/END yoksa ve base64 gibi görünüyorsa decode etmeyi dene
-  if (!pk.includes("BEGIN") && /^[A-Za-z0-9+/=\s]+$/.test(pk)) {
-    try {
-      const decoded = Buffer.from(pk, "base64").toString("utf8");
-      if (decoded.includes("BEGIN") && decoded.includes("END")) pk = decoded;
-    } catch {
-      // boş ver
-    }
-  }
-
-  return pk;
-}
-
-/** Vision client (3 env değişkeni ile) */
-function getVisionClientFromEnv() {
-  const projectId = process.env.GOOGLE_PROJECT_ID;
-  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-  const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
-
-  if (!projectId || !clientEmail || !rawPrivateKey) {
-    throw new Error(
-      "Missing GOOGLE_PROJECT_ID / GOOGLE_CLIENT_EMAIL / GOOGLE_PRIVATE_KEY"
-    );
-  }
-
-  const private_key = sanitizePrivateKey(rawPrivateKey);
-
-  // Basit ama sağlam: doğrudan credentials ver
-  return new ImageAnnotatorClient({
-    projectId,
-    credentials: {
-      client_email: clientEmail,
-      private_key,
-    },
-  });
-}
-
 export async function POST(req) {
-  let client;
-  try {
-    client = getVisionClientFromEnv();
-  } catch (e) {
-    return NextResponse.json(
-      { error: "Auth init failed: " + e.message },
-      { status: 500 }
-    );
-  }
-
   try {
     const formData = await req.formData();
     const file = formData.get("file");
@@ -79,6 +13,7 @@ export async function POST(req) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
+    // Şimdilik PNG/JPG destekliyoruz (PDF ayrı endpoint olacak)
     if (!["image/png", "image/jpeg", "image/jpg"].includes(file.type)) {
       return NextResponse.json(
         { error: `Unsupported file type: ${file.type}` },
@@ -86,17 +21,6 @@ export async function POST(req) {
       );
     }
 
-    const bytes = Buffer.from(await file.arrayBuffer());
-
-    // OCR
-    const [result] = await client.textDetection(bytes);
-    const detections = result?.textAnnotations || [];
-    if (detections.length === 0) {
-      return NextResponse.json({ error: "No text detected" }, { status: 400 });
-    }
-    const sourceText = detections[0].description;
-
-    // Translate v2
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
@@ -105,29 +29,69 @@ export async function POST(req) {
       );
     }
 
-    const tRes = await fetch(
+    // Dosyayı base64'e çevir
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const base64 = bytes.toString("base64");
+
+    // 1) Google Vision REST API ile OCR
+    const visionRes = await fetch(
+      `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requests: [
+            {
+              image: { content: base64 },
+              features: [{ type: "TEXT_DETECTION" }]
+            }
+          ]
+        })
+      }
+    );
+
+    const visionData = await visionRes.json();
+
+    if (!visionRes.ok || visionData.error) {
+      const msg = visionData.error?.message || "Vision OCR failed";
+      return NextResponse.json({ error: msg }, { status: visionRes.status || 400 });
+    }
+
+    const resp = visionData.responses?.[0] || {};
+    const sourceText =
+      resp.fullTextAnnotation?.text ||
+      resp.textAnnotations?.[0]?.description ||
+      "";
+
+    if (!sourceText.trim()) {
+      return NextResponse.json({ error: "No text detected" }, { status: 400 });
+    }
+
+    // 2) Google Translate v2 ile çeviri
+    const translateRes = await fetch(
       `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: sourceText, target: targetLang, format: "text" }),
+        body: JSON.stringify({ q: sourceText, target: targetLang, format: "text" })
       }
     );
-    const tData = await tRes.json();
 
-    if (!tRes.ok || tData.error) {
-      const msg = tData.error?.message || "Translate failed";
-      return NextResponse.json({ error: msg }, { status: tRes.status || 400 });
+    const translateData = await translateRes.json();
+
+    if (!translateRes.ok || translateData.error) {
+      const msg = translateData.error?.message || "Translate failed";
+      return NextResponse.json({ error: msg }, { status: translateRes.status || 400 });
     }
 
-    return NextResponse.json({
-      sourceText,
-      translatedText: tData.data?.translations?.[0]?.translatedText || "",
-    });
+    const translatedText =
+      translateData.data?.translations?.[0]?.translatedText || "";
+
+    return NextResponse.json({ sourceText, translatedText });
   } catch (err) {
-    // OpenSSL/decoder saçmalıkları da burada yakalanır
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
 
 
