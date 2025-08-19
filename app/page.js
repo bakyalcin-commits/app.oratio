@@ -3,6 +3,17 @@ import { useState } from "react";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("text");
+  const [sourceText, setSourceText] = useState("");
+  const [translatedText, setTranslatedText] = useState("");
+
+  const handleTranslate = () => {
+    // Şimdilik sahte çeviri: sadece tersine çevirme simülasyonu
+    if (!sourceText.trim()) {
+      setTranslatedText("Please enter some text to translate.");
+      return;
+    }
+    setTranslatedText("🔄 " + sourceText.split("").reverse().join(""));
+  };
 
   return (
     <main>
@@ -78,6 +89,8 @@ export default function Home() {
             <textarea
               placeholder="Enter your text here..."
               style={{ width: "100%", height: "150px", padding: "10px" }}
+              value={sourceText}
+              onChange={(e) => setSourceText(e.target.value)}
             ></textarea>
           </div>
 
@@ -95,10 +108,13 @@ export default function Home() {
                 padding: "10px",
                 background: "#f0f0f0",
               }}
+              value={translatedText}
             ></textarea>
           </div>
 
-          <button style={{ padding: "12px 24px" }}>TRANSLATE</button>
+          <button style={{ padding: "12px 24px" }} onClick={handleTranslate}>
+            TRANSLATE
+          </button>
         </section>
       )}
 
@@ -136,6 +152,7 @@ export default function Home() {
     </main>
   );
 }
+
 
 
 
