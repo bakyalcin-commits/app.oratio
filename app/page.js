@@ -87,8 +87,8 @@ export default function Page() {
         alert(
           `✅ OCR + Translate complete!\n\nDetected: ${
             data.detectedLang || "auto"
-          }\n\nOriginal:\n${(data.sourceText || "").slice(0, 1200)}\n\nTranslated:\n${
-            (data.translatedText || "").slice(0, 1200)
+          }\n\nOriginal:\n${(data.sourceText || "").slice(0, 1000)}\n\nTranslated:\n${
+            (data.translatedText || "").slice(0, 1000)
           }`
         );
       } else {
@@ -108,7 +108,7 @@ export default function Page() {
     const txt =
       `Detected language: ${lastResult.detectedLang || "auto"}\n\n` +
       `--- Original ---\n${lastResult.sourceText}\n\n` +
-      `--- Translated ---\n${lastResult.translatedText}\n`;
+      `--- Translated (${targetLang}) ---\n${lastResult.translatedText}\n`;
 
     const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -311,6 +311,37 @@ export default function Page() {
                   Download Result
                 </button>
               </div>
+
+              {lastResult ? (
+                <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                      Original (detected: {lastResult.detectedLang || "auto"})
+                    </div>
+                    <textarea
+                      style={{
+                        ...styles.textarea,
+                        minHeight: 140,
+                      }}
+                      readOnly
+                      value={lastResult.sourceText}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                      Translated → {targetLang.toUpperCase()}
+                    </div>
+                    <textarea
+                      style={{
+                        ...styles.textarea,
+                        minHeight: 160,
+                      }}
+                      readOnly
+                      value={lastResult.translatedText}
+                    />
+                  </div>
+                </div>
+              ) : null}
             </>
           )}
         </div>
@@ -320,5 +351,6 @@ export default function Page() {
     </main>
   );
 }
+
 
 
