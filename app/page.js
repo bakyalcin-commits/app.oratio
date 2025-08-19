@@ -7,6 +7,7 @@ export default function Home() {
   const [translatedText, setTranslatedText] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [downloadReady, setDownloadReady] = useState(false);
 
   const handleTranslate = () => {
     if (!sourceText.trim()) {
@@ -20,6 +21,7 @@ export default function Home() {
     if (e.target.files.length > 0) {
       const file = e.target.files[0];
       setSelectedFile(file);
+      setDownloadReady(false); // yeni dosya seçilince eski linki sıfırla
 
       if (file.type.startsWith("image/")) {
         setPreviewUrl(URL.createObjectURL(file));
@@ -27,6 +29,14 @@ export default function Home() {
         setPreviewUrl(null);
       }
     }
+  };
+
+  const handleFakeFileTranslate = () => {
+    if (!selectedFile) return;
+    // Sahte 2 saniyelik bekleme
+    setTimeout(() => {
+      setDownloadReady(true);
+    }, 2000);
   };
 
   return (
@@ -185,16 +195,29 @@ export default function Home() {
             <li>Download Result</li>
           </ol>
 
-          <button style={{ padding: "12px 24px" }}>TRANSLATE FILE</button>
+          <button style={{ padding: "12px 24px" }} onClick={handleFakeFileTranslate}>
+            TRANSLATE FILE
+          </button>
+
+          {downloadReady && (
+            <div style={{ marginTop: "20px" }}>
+              <a
+                href="#"
+                style={{
+                  display: "inline-block",
+                  padding: "12px 24px",
+                  background: "#22c55e",
+                  color: "#fff",
+                  borderRadius: "6px",
+                  textDecoration: "none",
+                }}
+              >
+                ⬇ Download Translated File
+              </a>
+            </div>
+          )}
         </section>
       )}
     </main>
   );
 }
-
-
-
-
-
-
-
