@@ -6,13 +6,10 @@ export default function Home() {
   const [sourceText, setSourceText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
   const [targetLang, setTargetLang] = useState("en");
-
   const [selectedFile, setSelectedFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [downloadReady, setDownloadReady] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [downloadReady, setDownloadReady] = useState(false);
 
-  // REAL Google Translate call via /api/translate
   const handleTranslate = async () => {
     if (!sourceText.trim()) {
       setTranslatedText("Please enter some text to translate.");
@@ -26,51 +23,60 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: sourceText,
-          targetLang
-        })
+          targetLang: targetLang,
+        }),
       });
 
       const data = await res.json();
 
       if (res.ok) {
-        setTranslatedText(data.translatedText || "");
+        setTranslatedText(data.translatedText);
       } else {
-        setTranslatedText("❌ Error: " + (data.error || "Translation failed"));
+        setTranslatedText("❌ Error: " + data.error);
       }
     } catch (err) {
       setTranslatedText("❌ Server error: " + err.message);
     }
   };
 
-  const handleFileChange = (e) => {
-    if (e.target.files.length > 0) {
-      const file = e.target.files[0];
-      setSelectedFile(file);
-      setDownloadReady(false);
-      setLoading(false);
-
-      if (file.type.startsWith("image/")) {
-        setPreviewUrl(URL.createObjectURL(file));
-      } else {
-        setPreviewUrl(null);
-      }
-    }
-  };
-
-  // Fake file translate for now (spinner + download button after 2s)
-  const handleFakeFileTranslate = () => {
+  const handleFileTranslate = async () => {
     if (!selectedFile) return;
+
     setLoading(true);
     setDownloadReady(false);
 
-    setTimeout(() => {
-      setLoading(false);
-      setDownloadReady(true);
-    }, 2000);
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("targetLang", targetLang);
+
+      const res = await fetch("/api/translate-file", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        alert(
+          "✅ OCR + Translate complete!\n\nOriginal:\n" +
+            data.sourceText +
+            "\n\nTranslated:\n" +
+            data.translatedText
+        );
+        setDownloadReady(true);
+      } else {
+        alert("❌ Error: " + (data.error || "Something went wrong"));
+      }
+    } catch (err) {
+      alert("❌ Server error: " + err.message);
+    }
+
+    setLoading(false);
   };
 
   return (
-    <main>
+    <main style={{ maxWidth: "900px", margin: "0 auto", padding: "40px" }}>
       {/* Logo + Title */}
       <header style={{ textAlign: "center", marginBottom: "40px" }}>
         <img
@@ -82,16 +88,14 @@ export default function Home() {
       </header>
 
       {/* Tabs */}
-      <section style={{ textAlign: "center", marginBottom: "30px" }}>
+      <section style={{ marginBottom: "30px", textAlign: "center" }}>
         <button
           onClick={() => setActiveTab("text")}
           style={{
             padding: "10px 20px",
             marginRight: "10px",
-            background: activeTab === "text" ? "#4f46e5" : "#e5e7eb",
-            color: activeTab === "text" ? "#fff" : "#000",
-            borderRadius: "6px",
-            border: "none",
+            backgroundColor: activeTab === "text" ? "#4f46e5" : "#888",
+            color: "#fff",
           }}
         >
           Translate Text
@@ -100,10 +104,8 @@ export default function Home() {
           onClick={() => setActiveTab("file")}
           style={{
             padding: "10px 20px",
-            background: activeTab === "file" ? "#4f46e5" : "#e5e7eb",
-            color: activeTab === "file" ? "#fff" : "#000",
-            borderRadius: "6px",
-            border: "none",
+            backgroundColor: activeTab === "file" ? "#4f46e5" : "#888",
+            color: "#fff",
           }}
         >
           Translate File
@@ -112,173 +114,78 @@ export default function Home() {
 
       {/* Content */}
       {activeTab === "text" && (
-        <section style={{ marginBottom: "60px" }}>
-          <h2 style={{ marginBottom: "20px" }}>Translate Text</h2>
-
-          {/* Target Language */}
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ display: "block", marginBottom: "6px" }}>
-              Target Language
-            </label>
-            <select
-              style={{ padding: "10px", width: "200px" }}
-              value={targetLang}
-              onChange={(e) => setTargetLang(e.target.value)}
-            >
-              <option value="en">English</option>
-              <option value="tr">Turkish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="it">Italian</option>
-              <option value="es">Spanish</option>
-              <option value="ru">Russian</option>
-              <option value="ar">Arabic</option>
-              <option value="sr">Serbian</option>
-              <option value="zh">Chinese</option>
-              <option value="ja">Japanese</option>
-            </select>
+        <section>
+          <h2>Translate Text</h2>
+          <textarea
+            rows="5"
+            placeholder="Enter text here..."
+            value={sourceText}
+            onChange={(e) => setSourceText(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "10px",
+              marginBottom: "10px",
+              borderRadius: "6px",
+            }}
+          />
+          <br />
+          <label>Target Language: </label>
+          <select
+            value={targetLang}
+            onChange={(e) => setTargetLang(e.target.value)}
+            style={{ margin: "10px 0", padding: "5px" }}
+          >
+            <option value="en">English</option>
+            <option value="tr">Turkish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="es">Spanish</option>
+            <option value="ru">Russian</option>
+            <option value="ar">Arabic</option>
+            <option value="sr">Serbian</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+          </select>
+          <br />
+          <button onClick={handleTranslate}>Translate</button>
+          <div
+            style={{
+              marginTop: "20px",
+              padding: "15px",
+              background: "#f4f4f4",
+              borderRadius: "8px",
+              minHeight: "100px",
+            }}
+          >
+            {translatedText}
           </div>
-
-          {/* Source Text */}
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ display: "block", marginBottom: "6px" }}>
-              Source Text
-            </label>
-            <textarea
-              placeholder="Enter your text here..."
-              style={{ width: "100%", height: "150px", padding: "10px" }}
-              value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
-            ></textarea>
-          </div>
-
-          {/* Output */}
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ display: "block", marginBottom: "6px" }}>
-              Translated Text
-            </label>
-            <textarea
-              readOnly
-              placeholder="Translation will appear here..."
-              style={{
-                width: "100%",
-                height: "150px",
-                padding: "10px",
-                background: "#f0f0f0",
-              }}
-              value={translatedText}
-            ></textarea>
-          </div>
-
-          <button style={{ padding: "12px 24px" }} onClick={handleTranslate}>
-            TRANSLATE
-          </button>
         </section>
       )}
 
       {activeTab === "file" && (
         <section>
-          <h2 style={{ marginBottom: "20px" }}>
-            Translate File (PNG, JPG, PDF)
-          </h2>
-
-          {/* Upload Zone */}
-          <div
-            style={{
-              border: "2px dashed #ccc",
-              borderRadius: "8px",
-              padding: "40px",
-              textAlign: "center",
-              marginBottom: "20px",
-            }}
-          >
-            <p>Drag & drop your file here or click to upload</p>
+          <h2>Translate File (Image/PDF)</h2>
+          <div className="upload-box">
             <input
               type="file"
               accept=".png,.jpg,.jpeg,.pdf"
-              onChange={handleFileChange}
+              onChange={(e) => setSelectedFile(e.target.files[0])}
             />
           </div>
-
-          {selectedFile && (
-            <div style={{ marginBottom: "20px" }}>
-              <p>
-                ✅ Selected file: <strong>{selectedFile.name}</strong>
-              </p>
-              {previewUrl && (
-                <img
-                  src={previewUrl}
-                  alt="Preview"
-                  style={{
-                    maxWidth: "300px",
-                    maxHeight: "200px",
-                    border: "1px solid #ccc",
-                    borderRadius: "6px",
-                    marginTop: "10px",
-                  }}
-                />
-              )}
-            </div>
-          )}
-
-          {/* Process Steps */}
-          <ol style={{ marginBottom: "20px" }}>
-            <li>Upload File</li>
-            <li>Detect & OCR</li>
-            <li>Translate</li>
-            <li>Download Result</li>
-          </ol>
-
-          {!loading && !downloadReady && (
-            <button style={{ padding: "12px 24px" }} onClick={handleFakeFileTranslate}>
-              TRANSLATE FILE
-            </button>
-          )}
-
-          {loading && (
-            <div style={{ marginTop: "20px" }}>
-              <p>⏳ Processing your file...</p>
-              <div
-                style={{
-                  margin: "10px auto",
-                  border: "4px solid #f3f3f3",
-                  borderTop: "4px solid #4f46e5",
-                  borderRadius: "50%",
-                  width: "36px",
-                  height: "36px",
-                  animation: "spin 1s linear infinite",
-                }}
-              />
-              <style jsx>{`
-                @keyframes spin {
-                  0% { transform: rotate(0deg); }
-                  100% { transform: rotate(360deg); }
-                }
-              `}</style>
-            </div>
-          )}
-
+          <button onClick={handleFileTranslate} disabled={!selectedFile || loading}>
+            {loading ? "Translating..." : "Translate File"}
+          </button>
           {downloadReady && (
-            <div style={{ marginTop: "20px" }}>
-              <a
-                href="#"
-                style={{
-                  display: "inline-block",
-                  padding: "12px 24px",
-                  background: "#22c55e",
-                  color: "#fff",
-                  borderRadius: "6px",
-                  textDecoration: "none",
-                }}
-              >
-                ⬇ Download Translated File
-              </a>
-            </div>
+            <p style={{ marginTop: "15px", color: "green" }}>
+              ✅ File processed successfully (download coming soon).
+            </p>
           )}
         </section>
       )}
     </main>
   );
 }
+
 
 
