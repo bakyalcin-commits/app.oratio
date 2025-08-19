@@ -12,7 +12,7 @@ export default function Home() {
       </header>
 
       {/* Translate Text Section */}
-      <section style={{ marginBottom: "40px" }}>
+      <section style={{ marginBottom: "60px" }}>
         <h2 style={{ marginBottom: "20px" }}>Translate Text</h2>
 
         {/* Target Language */}
@@ -54,14 +54,49 @@ export default function Home() {
           <textarea
             readOnly
             placeholder="Translation will appear here..."
-            style={{ width: "100%", height: "150px", padding: "10px", background: "#f0f0f0" }}
+            style={{
+              width: "100%",
+              height: "150px",
+              padding: "10px",
+              background: "#f0f0f0",
+            }}
           ></textarea>
         </div>
 
         <button style={{ padding: "12px 24px" }}>TRANSLATE</button>
       </section>
+
+      {/* Translate File Section */}
+      <section>
+        <h2 style={{ marginBottom: "20px" }}>Translate File (PNG, JPG, PDF)</h2>
+
+        {/* Upload Zone */}
+        <div
+          style={{
+            border: "2px dashed #ccc",
+            borderRadius: "8px",
+            padding: "40px",
+            textAlign: "center",
+            marginBottom: "20px",
+          }}
+        >
+          <p>Drag & drop your file here or click to upload</p>
+          <input type="file" accept=".png,.jpg,.jpeg,.pdf" />
+        </div>
+
+        {/* Process Steps */}
+        <ol style={{ marginBottom: "20px" }}>
+          <li>Upload File</li>
+          <li>Detect & OCR</li>
+          <li>Translate</li>
+          <li>Download Result</li>
+        </ol>
+
+        <button style={{ padding: "12px 24px" }}>TRANSLATE FILE</button>
+      </section>
     </main>
   );
 }
+
 
 
