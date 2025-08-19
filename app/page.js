@@ -4,12 +4,12 @@ import { useState } from "react";
 export default function Home() {
   const [activeTab, setActiveTab] = useState("text");
 
-  // text translate
+  // text
   const [sourceText, setSourceText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
   const [targetLang, setTargetLang] = useState("en");
 
-  // file translate
+  // file
   const [selectedFile, setSelectedFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [downloadReady, setDownloadReady] = useState(false);
@@ -28,7 +28,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (res.ok) setTranslatedText(data.translatedText || "");
-      else setTranslatedText("❌ Error: " + (data.error || "Translation failed"));
+      else setTranslatedText("❌ " + (data.error || "Translation failed"));
     } catch (e) {
       setTranslatedText("❌ Server error: " + e.message);
     }
@@ -42,18 +42,20 @@ export default function Home() {
       const fd = new FormData();
       fd.append("file", selectedFile);
       fd.append("targetLang", targetLang);
+
       const res = await fetch("/api/translate-file", { method: "POST", body: fd });
       const data = await res.json();
+
       if (res.ok) {
         alert(
           "✅ OCR + Translate complete!\n\nOriginal:\n" +
-          data.sourceText +
-          "\n\nTranslated:\n" +
-          data.translatedText
+            data.sourceText +
+            "\n\nTranslated:\n" +
+            data.translatedText
         );
         setDownloadReady(true);
       } else {
-        alert("❌ Error: " + (data.error || "Something went wrong"));
+        alert("❌ " + (data.error || "Something went wrong"));
       }
     } catch (e) {
       alert("❌ Server error: " + e.message);
@@ -62,100 +64,127 @@ export default function Home() {
   };
 
   return (
-    <main>
-      {/* Logo + Title */}
-      <header style={{ textAlign: "center", marginBottom: "40px" }}>
-        <img src="/Oratio.png" alt="Oratio Logo" style={{ height: 80, margin: "0 auto 20px" }} />
-        <h1>Oratio App • Medical Translate</h1>
-      </header>
+    <div className="container">
+      {/* KART */}
+      <div className="card">
+        {/* Başlık */}
+        <div className="app-header">
+          <img src="/Oratio.png" alt="Oratio Logo" />
+          <div>
+            <div className="app-title">Oratio App • Medical Translate</div>
+            <div className="app-subtitle">
+              Detect language automatically, translate to one of your targets, keep it clean.
+            </div>
+          </div>
+        </div>
 
-      {/* Tabs */}
-      <section style={{ textAlign: "center", marginBottom: 30 }}>
-        <button
-          onClick={() => setActiveTab("text")}
-          style={{ marginRight: 10, background: activeTab === "text" ? "#4f46e5" : "#888" }}
-        >
-          Translate Text
-        </button>
-        <button
-          onClick={() => setActiveTab("file")}
-          style={{ background: activeTab === "file" ? "#4f46e5" : "#888" }}
-        >
-          Translate File
-        </button>
-      </section>
+        {/* Sekmeler */}
+        <div className="tabs">
+          <button
+            className={`tab ${activeTab === "text" ? "active" : ""}`}
+            onClick={() => setActiveTab("text")}
+          >
+            Translate Text
+          </button>
+          <button
+            className={`tab ${activeTab === "file" ? "active" : ""}`}
+            onClick={() => setActiveTab("file")}
+          >
+            Translate File
+          </button>
+        </div>
 
-      {/* Translate Text */}
-      {activeTab === "text" && (
-        <section>
-          <h2>Translate Text</h2>
-          <div style={{ margin: "10px 0" }}>
-            <label>Target Language: </label>
-            <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} style={{ marginLeft: 6 }}>
-              <option value="en">English</option><option value="tr">Turkish</option>
-              <option value="fr">French</option><option value="de">German</option>
-              <option value="it">Italian</option><option value="es">Spanish</option>
-              <option value="ru">Russian</option><option value="ar">Arabic</option>
-              <option value="sr">Serbian</option><option value="zh">Chinese</option>
+        {/* İçerik */}
+        <div className="section">
+          {/* Hedef dil */}
+          <div style={{ marginBottom: 12 }}>
+            <div className="label">Target Language</div>
+            <select
+              className="select"
+              value={targetLang}
+              onChange={(e) => setTargetLang(e.target.value)}
+              style={{ maxWidth: 240 }}
+            >
+              <option value="en">English</option>
+              <option value="tr">Turkish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="it">Italian</option>
+              <option value="es">Spanish</option>
+              <option value="ru">Russian</option>
+              <option value="ar">Arabic</option>
+              <option value="sr">Serbian</option>
+              <option value="zh">Chinese</option>
               <option value="ja">Japanese</option>
             </select>
           </div>
 
-          <textarea rows={6} placeholder="Enter your text here..." value={sourceText}
-            onChange={(e) => setSourceText(e.target.value)}
-            style={{ width: "100%", padding: 10, borderRadius: 6 }} />
+          {activeTab === "text" && (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <div className="label">Source Text</div>
+                <textarea
+                  className="textarea"
+                  placeholder="Enter your text here..."
+                  value={sourceText}
+                  onChange={(e) => setSourceText(e.target.value)}
+                />
+              </div>
 
-          <div style={{ marginTop: 12 }}>
-            <button onClick={handleTranslate}>Translate</button>
-          </div>
+              <button className="btn" onClick={handleTranslate}>Translate</button>
 
-          <div style={{ marginTop: 20, padding: 15, background: "#f4f4f4", borderRadius: 8, minHeight: 100 }}>
-            {translatedText}
-          </div>
-        </section>
-      )}
-
-      {/* Translate File */}
-      {activeTab === "file" && (
-        <section>
-          <h2>Translate File (Image/PDF)</h2>
-
-          <div className="upload-box">
-            <input
-              type="file"
-              accept=".png,.jpg,.jpeg,.pdf"
-              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-            />
-          </div>
-
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <label>Target Language:</label>
-            <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
-              <option value="en">English</option><option value="tr">Turkish</option>
-              <option value="fr">French</option><option value="de">German</option>
-              <option value="it">Italian</option><option value="es">Spanish</option>
-              <option value="ru">Russian</option><option value="ar">Arabic</option>
-              <option value="sr">Serbian</option><option value="zh">Chinese</option>
-              <option value="ja">Japanese</option>
-            </select>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <button onClick={handleFileTranslate} disabled={!selectedFile || loading}>
-              {loading ? "Translating..." : "Translate File"}
-            </button>
-          </div>
-
-          {downloadReady && (
-            <p style={{ marginTop: 12, color: "green" }}>
-              ✅ File processed successfully (download coming soon).
-            </p>
+              <div className="output">{translatedText}</div>
+            </>
           )}
-        </section>
-      )}
-    </main>
+
+          {activeTab === "file" && (
+            <>
+              <div className="drop" style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  Upload a file (PNG / JPG / PDF soon)
+                </div>
+                <input
+                  className="input"
+                  type="file"
+                  accept=".png,.jpg,.jpeg"
+                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                  style={{ maxWidth: 420, display: "inline-block" }}
+                />
+              </div>
+
+              <div className="stepper">
+                <div className="step">1. Upload File</div>
+                <div className="step">2. OCR</div>
+                <div className="step">3. Translate</div>
+                <div className="step">4. Download</div>
+              </div>
+
+              <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+                <button
+                  className="btn secondary"
+                  onClick={handleFileTranslate}
+                  disabled={!selectedFile || loading}
+                >
+                  {loading ? "Processing…" : "Translate File"}
+                </button>
+                <button
+                  className="btn gray"
+                  disabled={!downloadReady}
+                  onClick={() => alert("Download flow will attach here.")}
+                >
+                  Download Result
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="footer">© {new Date().getFullYear()} Oratio. All rights reserved.</div>
+    </div>
   );
 }
+
 
 
 
