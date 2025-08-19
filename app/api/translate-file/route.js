@@ -13,7 +13,6 @@ export async function POST(req) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    // Şimdilik PNG/JPG destekliyoruz (PDF ayrı endpoint olacak)
     if (!["image/png", "image/jpeg", "image/jpg"].includes(file.type)) {
       return NextResponse.json(
         { error: `Unsupported file type: ${file.type}` },
@@ -23,17 +22,13 @@ export async function POST(req) {
 
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { error: "Missing GOOGLE_API_KEY" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Missing GOOGLE_API_KEY" }, { status: 500 });
     }
 
-    // Dosyayı base64'e çevir
     const bytes = Buffer.from(await file.arrayBuffer());
     const base64 = bytes.toString("base64");
 
-    // 1) Google Vision REST API ile OCR
+    // 1) OCR
     const visionRes = await fetch(
       `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
       {
@@ -49,9 +44,7 @@ export async function POST(req) {
         })
       }
     );
-
     const visionData = await visionRes.json();
-
     if (!visionRes.ok || visionData.error) {
       const msg = visionData.error?.message || "Vision OCR failed";
       return NextResponse.json({ error: msg }, { status: visionRes.status || 400 });
@@ -63,20 +56,33 @@ export async function POST(req) {
       resp.textAnnotations?.[0]?.description ||
       "";
 
+    const detectedLang =
+      resp.textAnnotations?.[0]?.locale ||
+      resp.fullTextAnnotation?.pages?.[0]?.property?.detectedLanguages?.[0]?.languageCode ||
+      "";
+
     if (!sourceText.trim()) {
       return NextResponse.json({ error: "No text detected" }, { status: 400 });
     }
 
-    // 2) Google Translate v2 ile çeviri
+    // 2) Translate
+    const translateBody = {
+      q: sourceText,
+      target: targetLang,
+      format: "text"
+    };
+    if (detectedLang) {
+      translateBody.source = detectedLang.toLowerCase(); // örn "tr"
+    }
+
     const translateRes = await fetch(
       `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: sourceText, target: targetLang, format: "text" })
+        body: JSON.stringify(translateBody)
       }
     );
-
     const translateData = await translateRes.json();
 
     if (!translateRes.ok || translateData.error) {
@@ -87,11 +93,16 @@ export async function POST(req) {
     const translatedText =
       translateData.data?.translations?.[0]?.translatedText || "";
 
-    return NextResponse.json({ sourceText, translatedText });
+    return NextResponse.json({
+      sourceText,
+      translatedText,
+      detectedLang: detectedLang || null
+    });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
 
 
 
