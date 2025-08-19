@@ -1,175 +1,334 @@
 "use client";
-import { useState } from "react";
 
-export default function Home() {
-  const [activeTab, setActiveTab] = useState("text");
+import React from "react";
 
-  // text translate
-  const [sourceText, setSourceText] = useState("");
-  const [translatedText, setTranslatedText] = useState("");
-  const [targetLang, setTargetLang] = useState("en");
+// Simple language options (value must be ISO code)
+const LANGS = [
+  { label: "English", value: "en" },
+  { label: "Turkish", value: "tr" },
+  { label: "French", value: "fr" },
+  { label: "German", value: "de" },
+  { label: "Italian", value: "it" },
+  { label: "Spanish", value: "es" },
+  { label: "Russian", value: "ru" },
+  { label: "Arabic", value: "ar" },
+  { label: "Serbian", value: "sr" },
+  { label: "Chinese", value: "zh" },
+  { label: "Japanese", value: "ja" },
+];
 
-  // file translate
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [downloadReady, setDownloadReady] = useState(false);
+export default function Page() {
+  const [mode, setMode] = React.useState<"text" | "file">("file");
 
-  const handleTranslate = async () => {
-    if (!sourceText.trim()) {
-      setTranslatedText("Please enter some text to translate.");
+  // shared
+  const [targetLang, setTargetLang] = React.useState("en");
+  const [loading, setLoading] = React.useState(false);
+
+  // text
+  const [inputText, setInputText] = React.useState("");
+  const [outputText, setOutputText] = React.useState("");
+
+  // file
+  const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
+  const [lastResult, setLastResult] = React.useState<{
+    sourceText: string;
+    translatedText: string;
+    detectedLang?: string | null;
+  } | null>(null);
+  const [downloadReady, setDownloadReady] = React.useState(false);
+
+  async function handleTranslateText() {
+    if (!inputText.trim()) {
+      alert("Please enter some text.");
       return;
     }
+    setLoading(true);
+    setOutputText("");
     try {
-      setTranslatedText("⏳ Translating...");
       const res = await fetch("/api/translate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: sourceText, targetLang }),
+        body: JSON.stringify({ text: inputText, target: targetLang }),
       });
       const data = await res.json();
-      if (res.ok) setTranslatedText(data.translatedText || "");
-      else setTranslatedText("❌ " + (data.error || "Translation failed"));
-    } catch (e) {
-      setTranslatedText("❌ Server error: " + e.message);
+      if (res.ok) {
+        setOutputText(data.result || "");
+        alert("✅ Translation complete!");
+      } else {
+        alert("❌ " + (data.error || "Translate failed"));
+      }
+    } catch (e: any) {
+      alert("❌ Server error: " + e.message);
     }
-  };
+    setLoading(false);
+  }
 
-  const handleFileTranslate = async () => {
-    if (!selectedFile) return;
+  async function handleFileTranslate() {
+    if (!selectedFile) {
+      alert("Please choose a PNG/JPG file.");
+      return;
+    }
     setLoading(true);
     setDownloadReady(false);
     try {
       const fd = new FormData();
-      fd.append("file", selectedFile);          // PNG/JPG destekli
+      fd.append("file", selectedFile);
       fd.append("targetLang", targetLang);
 
-      const res = await fetch("/api/translate-file", { method: "POST", body: fd });
+      const res = await fetch("/api/translate-file", {
+        method: "POST",
+        body: fd,
+      });
       const data = await res.json();
 
       if (res.ok) {
-        alert(
-          "✅ OCR + Translate complete!\n\nOriginal:\n" +
-            data.sourceText +
-            "\n\nTranslated:\n" +
-            data.translatedText
-        );
+        setLastResult({
+          sourceText: data.sourceText || "",
+          translatedText: data.translatedText || "",
+          detectedLang: data.detectedLang || "",
+        });
         setDownloadReady(true);
+        alert(
+          `✅ OCR + Translate complete!\n\nDetected: ${
+            data.detectedLang || "auto"
+          }\n\nOriginal:\n${(data.sourceText || "").slice(0, 1200)}\n\nTranslated:\n${
+            (data.translatedText || "").slice(0, 1200)
+          }`
+        );
       } else {
         alert("❌ " + (data.error || "Something went wrong"));
       }
-    } catch (e) {
+    } catch (e: any) {
       alert("❌ Server error: " + e.message);
     }
     setLoading(false);
+  }
+
+  function handleDownload() {
+    if (!lastResult) {
+      alert("Nothing to download yet.");
+      return;
+    }
+    const txt =
+      `Detected language: ${lastResult.detectedLang || "auto"}\n\n` +
+      `--- Original ---\n${lastResult.sourceText}\n\n` +
+      `--- Translated ---\n${lastResult.translatedText}\n`;
+
+    const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const base = (selectedFile?.name || "result").replace(/\.[^.]+$/, "");
+    a.href = url;
+    a.download = `${base}-${targetLang}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  const styles: Record<string, React.CSSProperties> = {
+    page: {
+      minHeight: "100vh",
+      background: "#0b1220",
+      color: "#eef1f7",
+      fontFamily:
+        "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Ubuntu,Inter,sans-serif",
+    },
+    container: {
+      maxWidth: 980,
+      margin: "0 auto",
+      padding: "28px 20px 64px",
+    },
+    top: {
+      display: "flex",
+      alignItems: "center",
+      gap: 14,
+      marginBottom: 10,
+    },
+    logo: { height: 36 },
+    h1: {
+      fontSize: 24,
+      fontWeight: 800,
+      letterSpacing: 0.2,
+    },
+    sub: {
+      color: "#93a0b8",
+      marginTop: 2,
+      marginBottom: 14,
+      fontSize: 14,
+    },
+    tabs: { display: "flex", gap: 8, marginBottom: 18 },
+    tab: (active: boolean): React.CSSProperties => ({
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: "1px solid rgba(255,255,255,0.08)",
+      background: active ? "#5b6bff" : "transparent",
+      color: active ? "white" : "#c9d4e6",
+      cursor: "pointer",
+      fontWeight: 700,
+    }),
+    card: {
+      border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 16,
+      padding: 20,
+      background:
+        "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.015))",
+    },
+    row: { display: "flex", alignItems: "center", gap: 12, marginBottom: 12 },
+    select: {
+      background: "#0f1729",
+      color: "#eef1f7",
+      border: "1px solid rgba(255,255,255,0.12)",
+      padding: "8px 10px",
+      borderRadius: 10,
+      outline: "none",
+    },
+    textarea: {
+      width: "100%",
+      minHeight: 160,
+      background: "#0f1729",
+      color: "#eef1f7",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: 12,
+      padding: 12,
+      outline: "none",
+      resize: "vertical",
+    },
+    input: {
+      background: "#0f1729",
+      color: "#eef1f7",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: 10,
+      padding: 10,
+    },
+    primary: {
+      background: "#5b6bff",
+      color: "white",
+      border: "none",
+      borderRadius: 12,
+      padding: "10px 14px",
+      fontWeight: 800,
+      cursor: "pointer",
+    },
+    ghost: {
+      background: "transparent",
+      color: "#c9d4e6",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: 12,
+      padding: "10px 14px",
+      fontWeight: 700,
+      cursor: "pointer",
+    },
+    footer: {
+      marginTop: 36,
+      textAlign: "center",
+      color: "#7d8aa6",
+      fontSize: 12,
+      opacity: 0.8,
+    },
   };
 
   return (
-    <div className="container">
-      <div className="card">
-        {/* Header */}
-        <div className="app-header">
-          <img src="/Oratio.png" alt="Oratio Logo" />
+    <main style={styles.page}>
+      <div style={styles.container}>
+        <div style={styles.top}>
+          <img src="/Oratio.png" alt="Oratio Logo" style={styles.logo} />
           <div>
-            <div className="app-title">Oratio App • Medical Translate</div>
-            <div className="app-subtitle">
-              Auto-detect source language. Translate to your target. Keep it clean.
-            </div>
+            <div style={styles.h1}>Oratio App • Medical Translate</div>
+            <div style={styles.sub}>Auto-detect source language</div>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="tabs">
+        <div style={styles.tabs}>
           <button
-            className={`tab ${activeTab === "text" ? "active" : ""}`}
-            onClick={() => setActiveTab("text")}
+            style={styles.tab(mode === "text")}
+            onClick={() => setMode("text")}
           >
             Translate Text
           </button>
           <button
-            className={`tab ${activeTab === "file" ? "active" : ""}`}
-            onClick={() => setActiveTab("file")}
+            style={styles.tab(mode === "file")}
+            onClick={() => setMode("file")}
           >
             Translate File
           </button>
         </div>
 
-        {/* Body */}
-        <div className="section">
-          {/* Target select – her iki tab için ortak */}
-          <div style={{ marginBottom: 12 }}>
-            <div className="label">Target Language</div>
+        <div style={styles.card}>
+          <div style={styles.row}>
+            <div style={{ fontWeight: 700 }}>Target Language</div>
             <select
-              className="select"
               value={targetLang}
               onChange={(e) => setTargetLang(e.target.value)}
-              style={{ maxWidth: 260 }}
+              style={styles.select}
             >
-              <option value="en">English</option>
-              <option value="tr">Turkish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="it">Italian</option>
-              <option value="es">Spanish</option>
-              <option value="ru">Russian</option>
-              <option value="ar">Arabic</option>
-              <option value="sr">Serbian</option>
-              <option value="zh">Chinese</option>
-              <option value="ja">Japanese</option>
+              {LANGS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
             </select>
           </div>
 
-          {activeTab === "text" && (
+          {mode === "text" ? (
             <>
-              <div style={{ marginBottom: 12 }}>
-                <div className="label">Source Text</div>
-                <textarea
-                  className="textarea"
-                  placeholder="Enter your text here..."
-                  value={sourceText}
-                  onChange={(e) => setSourceText(e.target.value)}
-                />
+              <textarea
+                style={styles.textarea}
+                placeholder="Enter your text here..."
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+              />
+              <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                <button style={styles.primary} onClick={handleTranslateText}>
+                  {loading ? "Processing..." : "Translate"}
+                </button>
+                {outputText && (
+                  <button
+                    style={styles.ghost}
+                    onClick={() => navigator.clipboard.writeText(outputText)}
+                  >
+                    Copy Result
+                  </button>
+                )}
               </div>
-
-              <button className="btn" onClick={handleTranslate}>Translate</button>
-
-              <div className="output">{translatedText}</div>
-            </>
-          )}
-
-          {activeTab === "file" && (
-            <>
-              <div className="drop" style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                  Upload a file (PNG / JPG)
+              {outputText ? (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Result</div>
+                  <textarea
+                    style={{ ...styles.textarea, minHeight: 140 }}
+                    readOnly
+                    value={outputText}
+                  />
                 </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                Upload a file (PNG / JPG)
+              </div>
+              <div style={styles.row}>
                 <input
-                  className="input"
                   type="file"
                   accept=".png,.jpg,.jpeg"
-                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                  style={{ maxWidth: 420, display: "inline-block" }}
+                  onChange={(e) =>
+                    setSelectedFile(e.target.files?.[0] || null)
+                  }
+                  style={styles.input}
                 />
               </div>
-
-              <div className="stepper">
-                <div className="step">1. Upload</div>
-                <div className="step">2. OCR</div>
-                <div className="step">3. Translate</div>
-                <div className="step">4. Download</div>
-              </div>
-
-              <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+              <div style={{ display: "flex", gap: 10 }}>
                 <button
-                  className="btn secondary"
+                  style={styles.primary}
                   onClick={handleFileTranslate}
-                  disabled={!selectedFile || loading}
+                  disabled={loading}
                 >
-                  {loading ? "Processing…" : "Translate File"}
+                  {loading ? "Processing..." : "Translate File"}
                 </button>
                 <button
-                  className="btn gray"
-                  disabled={!downloadReady}
-                  onClick={() => alert("Download flow will attach here.")}
+                  style={styles.ghost}
+                  onClick={handleDownload}
+                  disabled={!downloadReady || !lastResult}
                 >
                   Download Result
                 </button>
@@ -177,9 +336,10 @@ export default function Home() {
             </>
           )}
         </div>
-      </div>
 
-      <div className="footer">© {new Date().getFullYear()} Oratio. All rights reserved.</div>
-    </div>
+        <div style={styles.footer}>© 2025 Oratio. All rights reserved.</div>
+      </div>
+    </main>
   );
 }
+
