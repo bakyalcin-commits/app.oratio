@@ -1,9 +1,11 @@
 // app/api/translate-image/route.js
 import { NextResponse } from "next/server";
+import Jimp from "jimp"; // pure JS, Vercel uyumlu
 
 export const runtime = "nodejs";
 
-// HTML decode
+/* ------------------------ helpers ------------------------ */
+
 function decodeHtml(html) {
   if (!html) return "";
   return html
@@ -38,7 +40,7 @@ function extractLineItems(visionJson) {
   return res;
 }
 
-// Çeviri helper (batch)
+// Translate v2 batch
 async function translateArray(strings, target, source, apiKey) {
   const out = [];
   const batchSize = 100;
@@ -68,12 +70,42 @@ async function translateArray(strings, target, source, apiKey) {
   return out;
 }
 
+/* Jimp bitmap fontları: boyutlar sabit; kutu yüksekliğine göre
+   en yakın fontu seçiyoruz. */
+const FONT_SIZES = [
+  { key: "FONT_SANS_8_BLACK", h: 10 },
+  { key: "FONT_SANS_12_BLACK", h: 14 },
+  { key: "FONT_SANS_16_BLACK", h: 18 },
+  { key: "FONT_SANS_32_BLACK", h: 34 },
+  { key: "FONT_SANS_64_BLACK", h: 66 },
+  { key: "FONT_SANS_128_BLACK", h: 130 },
+];
+
+async function loadFonts() {
+  // cache’leyelim
+  if (globalThis.__ORATIO_FONTS__) return globalThis.__ORATIO_FONTS__;
+  const map = new Map();
+  for (const f of FONT_SIZES) {
+    const font = await Jimp.loadFont(Jimp[f.key]);
+    map.set(f.key, font);
+  }
+  globalThis.__ORATIO_FONTS__ = map;
+  return map;
+}
+
+function pickFontKey(boxH) {
+  // kutu yüksekliğine uygun en yakın küçük fontu bul
+  let chosen = FONT_SIZES[0].key;
+  for (const f of FONT_SIZES) {
+    if (boxH >= f.h) chosen = f.key;
+  }
+  return chosen;
+}
+
+/* ------------------------ route ------------------------ */
+
 export async function POST(req) {
   try {
-    // >>> webpack'i kandır: binary paketi runtime'da yükle
-    // eslint-disable-next-line no-eval
-    const { createCanvas, loadImage } = eval("require")("@napi-rs/canvas");
-
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
@@ -98,9 +130,6 @@ export async function POST(req) {
 
     // Görseli oku
     const buf = Buffer.from(await file.arrayBuffer());
-    const img = await loadImage(buf);
-    const width = img.width;
-    const height = img.height;
 
     // OCR
     const base64 = buf.toString("base64");
@@ -135,48 +164,51 @@ export async function POST(req) {
       visJson?.responses?.[0]?.textAnnotations?.[0]?.locale || null;
 
     // Çeviri
-    const texts = lineItems.map((l) => l.text);
+    const strings = lineItems.map((l) => l.text);
     const translated = await translateArray(
-      texts,
+      strings,
       targetLang,
       detectedLang,
       apiKey
     );
 
-    // Canvas üzerine yaz
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, width, height);
+    // Overlay: Jimp ile
+    const image = await Jimp.read(buf);
+    const fonts = await loadFonts();
 
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = "transparent";
-    ctx.textBaseline = "middle";
-
+    // Her kutuyu beyaza boya, metni ortala yaz
     for (let i = 0; i < lineItems.length; i++) {
       const it = lineItems[i];
       const txt = translated[i] || "";
 
-      // arka planı sil
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(it.x, it.y, it.w, it.h);
+      // Arka planı beyaz doldur
+      image.scan(it.x, it.y, it.w, it.h, function (x, y, idx) {
+        this.bitmap.data[idx + 0] = 255; // R
+        this.bitmap.data[idx + 1] = 255; // G
+        this.bitmap.data[idx + 2] = 255; // B
+        this.bitmap.data[idx + 3] = 255; // A
+      });
 
-      // yazı
-      ctx.fillStyle = "#111111";
-      let fontSize = Math.max(8, Math.floor(it.h * 0.8));
-      const family = "sans-serif";
-      while (fontSize > 7) {
-        ctx.font = `${fontSize}px ${family}`;
-        const m = ctx.measureText(txt);
-        if (m.width <= it.w) break;
-        fontSize -= 1;
-      }
-      const textX = it.x + it.w / 2;
-      const textY = it.y + it.h / 2;
-      ctx.textAlign = "center";
-      ctx.fillText(txt, textX, textY);
+      // Uygun fontu seç
+      const fontKey = pickFontKey(it.h);
+      const font = fonts.get(fontKey);
+
+      // metni kutu içine ortala
+      image.print(
+        font,
+        it.x,
+        it.y,
+        {
+          text: txt,
+          alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+          alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE,
+        },
+        it.w,
+        it.h
+      );
     }
 
-    const out = canvas.toBuffer("image/png");
+    const out = await image.getBufferAsync(Jimp.MIME_PNG);
     return new NextResponse(out, {
       status: 200,
       headers: { "Content-Type": "image/png" },
@@ -185,4 +217,5 @@ export async function POST(req) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
 
