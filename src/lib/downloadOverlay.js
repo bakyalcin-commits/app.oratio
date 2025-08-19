@@ -8,7 +8,6 @@ export async function downloadOverlayPNG({
   lineWrap = 30,
   filename = "translated-overlay.png",
 }) {
-  // Basit doğrulama
   if (!imageBase64 || !width || !height) {
     throw new Error("Image or dimensions missing on client");
   }
@@ -17,7 +16,8 @@ export async function downloadOverlayPNG({
   }
 
   const payload = { imageBase64, boxes, width, height, fontPx, lineWrap };
-  console.debug("[overlay] sending payload:", {
+
+  console.debug("[overlay] sending to /api/overlay", {
     hasImage: !!imageBase64,
     width,
     height,
@@ -40,7 +40,6 @@ export async function downloadOverlayPNG({
   }
 
   const blob = await res.blob();
-  console.debug("[overlay] response blob size:", blob.size, "bytes");
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -50,4 +49,5 @@ export async function downloadOverlayPNG({
   a.remove();
   URL.revokeObjectURL(url);
 }
+
 
