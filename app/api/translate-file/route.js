@@ -3,16 +3,48 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+// basit chunker: 4500 civarı karakterde kır
+function chunkText(str, max = 4500) {
+  if (!str) return [];
+  const out = [];
+  let i = 0;
+  while (i < str.length) {
+    let end = Math.min(i + max, str.length);
+    // kelime ortasında kesmeyelim
+    if (end < str.length) {
+      const j = str.lastIndexOf("\n", end);
+      const k = str.lastIndexOf(" ", end);
+      const cut = Math.max(j, k);
+      if (cut > i + 1500) end = cut; // çok geri kaçmasın
+    }
+    out.push(str.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+
+// html entity decode (v2 translatedText HTML-safe geliyor)
+function decodeHtml(html) {
+  if (!html) return "";
+  return html
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#x2F;/g, "/");
+}
+
 export async function POST(req) {
   try {
     const formData = await req.formData();
     const file = formData.get("file");
-    const targetLang = formData.get("targetLang") || "en";
+    const targetLang = (formData.get("targetLang") || "en").toString();
 
     if (!file) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
-
     if (!["image/png", "image/jpeg", "image/jpg"].includes(file.type)) {
       return NextResponse.json(
         { error: `Unsupported file type: ${file.type}` },
@@ -22,13 +54,16 @@ export async function POST(req) {
 
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "Missing GOOGLE_API_KEY" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Missing GOOGLE_API_KEY" },
+        { status: 500 }
+      );
     }
 
+    // 1) OCR
     const bytes = Buffer.from(await file.arrayBuffer());
     const base64 = bytes.toString("base64");
 
-    // 1) OCR
     const visionRes = await fetch(
       `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
       {
@@ -38,10 +73,10 @@ export async function POST(req) {
           requests: [
             {
               image: { content: base64 },
-              features: [{ type: "TEXT_DETECTION" }]
-            }
-          ]
-        })
+              features: [{ type: "TEXT_DETECTION" }],
+            },
+          ],
+        }),
       }
     );
     const visionData = await visionRes.json();
@@ -65,43 +100,46 @@ export async function POST(req) {
       return NextResponse.json({ error: "No text detected" }, { status: 400 });
     }
 
-    // 2) Translate
-    const translateBody = {
-      q: sourceText,
+    // 2) Translate (chunk + array)
+    const chunks = chunkText(sourceText, 4500);
+    const body = {
+      q: chunks,
       target: targetLang,
-      format: "text"
+      format: "text",
     };
-    if (detectedLang) {
-      translateBody.source = detectedLang.toLowerCase(); // örn "tr"
+    if (detectedLang && detectedLang.toLowerCase() !== targetLang.toLowerCase()) {
+      body.source = detectedLang.toLowerCase();
     }
 
-    const translateRes = await fetch(
+    const trRes = await fetch(
       `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(translateBody)
+        body: JSON.stringify(body),
       }
     );
-    const translateData = await translateRes.json();
-
-    if (!translateRes.ok || translateData.error) {
-      const msg = translateData.error?.message || "Translate failed";
-      return NextResponse.json({ error: msg }, { status: translateRes.status || 400 });
+    const trData = await trRes.json();
+    if (!trRes.ok || trData.error) {
+      const msg = trData.error?.message || "Translate failed";
+      return NextResponse.json({ error: msg }, { status: trRes.status || 400 });
     }
 
-    const translatedText =
-      translateData.data?.translations?.[0]?.translatedText || "";
+    const parts = (trData.data?.translations || []).map((t) =>
+      decodeHtml(t.translatedText || "")
+    );
+    const translatedText = parts.join("\n");
 
     return NextResponse.json({
       sourceText,
       translatedText,
-      detectedLang: detectedLang || null
+      detectedLang: detectedLang || null,
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
 
 
 
