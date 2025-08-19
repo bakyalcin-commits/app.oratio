@@ -1,7 +1,7 @@
 {
   "name": "oratio-v1",
-  "private": true,
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "next dev",
@@ -23,6 +23,7 @@
     "node": ">=18.17.0"
   }
 }
+
 
 
 
