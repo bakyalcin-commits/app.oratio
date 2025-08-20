@@ -1,5 +1,4 @@
-'use client';
-
+"use client";
 import NextImage from "next/image";
 import { useRef, useState } from "react";
 
@@ -22,37 +21,44 @@ export default function Page() {
     setBusy(true); setPngURL(null);
 
     try {
-      // 1) OCR + bbox + çeviri
       const form = new FormData();
       form.append("file", file);
       form.append("targetLang", lang);
-      const j = await fetch("/api/translate", { method: "POST", body: form }).then(r => r.json());
 
-      // 2) Görüntüyü yükle
+      // 1) bbox + çeviri
+      const { items } = await fetch("/api/translate", { method: "POST", body: form }).then(r => r.json());
+
+      // 2) kaynağı yükle
       const srcURL = URL.createObjectURL(file);
       const img = new Image();
       img.onload = async () => {
-        const dpi = 2;
         const canvas = document.createElement("canvas");
-        canvas.width = img.width * dpi;
-        canvas.height = img.height * dpi;
+        canvas.width = img.width;
+        canvas.height = img.height;
         const ctx = canvas.getContext("2d")!;
-        ctx.scale(dpi, dpi);
+        ctx.imageSmoothingEnabled = true;
         ctx.drawImage(img, 0, 0);
 
-        // RTL yönü
-        // @ts-ignore
-        ctx.direction = lang === "العربية" ? "rtl" : "ltr";
-        ctx.textBaseline = "top";
+        // opak beyaz, çizgiler görünmeye devam etsin diye sadece satır yüksekliği kadar kaplıyoruz
+        ctx.globalCompositeOperation = "source-over";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
 
-        for (const it of (j.items as any[])) {
-          // 2.1 alanı beyazla kapat
-          const pad = Math.max(2, Math.round(Math.min(it.h, it.w) * 0.06));
-          ctx.fillStyle = "rgba(255,255,255,0.98)";
-          ctx.fillRect(it.x - pad, it.y - pad, it.w + pad * 2, it.h + pad * 2);
+        for (const it of items as any[]) {
+          const pad = Math.max(1, Math.round(Math.min(it.h, 20) * 0.25)); // ince şerit
+          const x = it.x + 1;
+          const y = it.y + 1;
+          const w = it.w - 2;
+          const h = it.h - 2;
 
-          // 2.2 yazıyı kutuya sığdır
-          fitTextInBox(ctx, it.translated, it.x, it.y, it.w, it.h, lang === "العربية");
+          // alanı temizle
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(x, y, w, h);
+
+          // tek satır sığdır
+          const rtl = lang === "العربية";
+          ctx.textAlign = rtl ? "right" : "left";
+          fitSingleLine(ctx, decodeHtml(it.translated), rtl ? x + w - pad : x + pad, y + h / 2, w - pad * 2, rtl);
         }
 
         const blob = await new Promise<Blob>((resolve) =>
@@ -125,69 +131,43 @@ export default function Page() {
   );
 }
 
-/* ------- yardımcı çizim ------- */
-function fitTextInBox(
+/* ---- metni tek satıra sığdır ---- */
+function fitSingleLine(
   ctx: CanvasRenderingContext2D,
   text: string,
-  x: number, y: number, w: number, h: number,
-  rtl: boolean
+  x: number, cy: number, maxW: number, rtl: boolean
 ) {
   const family = "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-  let size = Math.max(10, Math.floor(Math.min(w, h) * 0.22)); // başlangıç tahmini
-  const pad = 4;
-
+  // yükseklikten başla, genişliğe göre küçült
+  let size = Math.max(10, Math.min(24, Math.floor(maxW * 0.08)));
   for (; size >= 8; size--) {
     ctx.font = `${size}px ${family}`;
-    const lineH = Math.ceil(size * 1.2);
-    const lines = wrapText(ctx, decodeHtml(text), w - pad * 2);
-    const needed = lines.length * lineH;
-    if (needed <= h - pad * 2) {
+    const w = ctx.measureText(text).width;
+    if (w <= maxW) {
       ctx.fillStyle = "#000";
-      let yy = y + pad;
-      const xx = rtl ? x + w - pad : x + pad;
-      for (const ln of lines) {
-        if (rtl) {
-          const width = ctx.measureText(ln).width;
-          ctx.fillText(ln, xx - width, yy);
-        } else {
-          ctx.fillText(ln, xx, yy);
-        }
-        yy += lineH;
-      }
+      if (rtl) ctx.fillText(text, x, cy);
+      else ctx.fillText(text, x, cy);
       return;
     }
   }
-
-  // Olmadıysa en küçük boyda tek satır kısalt
+  // sığmazsa kısalt
   size = 8; ctx.font = `${size}px ${family}`;
-  const ell = ellipsize(ctx, decodeHtml(text), w - pad * 2);
-  ctx.fillText(ell, x + pad, y + pad);
+  const ell = ellipsize(ctx, text, maxW);
+  ctx.fillStyle = "#000";
+  ctx.fillText(ell, x, cy);
 }
 
-function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number) {
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let line = "";
-  for (const w of words) {
-    const test = line ? line + " " + w : w;
-    if (ctx.measureText(test).width > maxW) {
-      if (line) lines.push(line);
-      line = w;
-    } else line = test;
-  }
-  if (line) lines.push(line);
-  return lines;
-}
 function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number) {
   let t = text;
   while (ctx.measureText(t + "…").width > maxW && t.length > 1) t = t.slice(0, -1);
   return t + "…";
 }
+
 function decodeHtml(s: string) {
-  // Google Translate v2 bazen HTML entity döndürür
   const el = document.createElement("textarea"); el.innerHTML = s;
   return el.value;
 }
+
 
 
 
