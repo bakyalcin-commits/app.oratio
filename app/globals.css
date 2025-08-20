@@ -1,0 +1,18 @@
+:root { color-scheme: dark; }
+html, body { height:100%; }
+body { margin:0; background:#0b0b0b; color:#e5e5e5; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+.container { max-width: 820px; margin: 0 auto; padding: 32px 20px 64px; }
+.header { text-align:center; margin-top: 12px; }
+.logo { height:64px; width:auto; }
+.subtitle { margin-top: 6px; font-weight:800; letter-spacing:.08em; color:#fff; }
+.card { margin:22px auto 0; width:700px; max-width:100%; min-height:150px; border-radius:16px; background:#1a1a1a; border:1px solid rgba(255,255,255,.08); display:grid; place-items:center; padding:26px; cursor:pointer; }
+.card:hover { background:#1d1d1d; }
+.card .hint { margin-top:8px; color:#e6e6e6; font-weight:700; font-size:20px; }
+.card .formats { margin-top:6px; font-size:12px; color:#9b9b9b; }
+.row { margin:16px auto 0; width:700px; max-width:100%; display:grid; gap:12px; }
+.select { width:100%; background:#111; color:#eaeaea; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:12px 14px; font-size:15px; }
+.button { width:100%; padding:12px 16px; border-radius:12px; background:#fff; color:#000; font-weight:800; border:none; cursor:pointer; }
+.button[disabled] { background:#2b2b2b; color:#888; cursor:not-allowed; }
+.small { text-align:center; font-size:12px; color:#8a8a8a; }
+.hidden { display:none; }
+.out { white-space:pre-wrap; background:#111; border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:14px; margin-top:14px; }
