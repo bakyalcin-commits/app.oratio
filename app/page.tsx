@@ -1,172 +1,257 @@
 "use client";
-import NextImage from "next/image";
-import { useRef, useState } from "react";
 
-const LANGS = [
-  "English","Türkçe","Русский","العربية","Српски","Deutsch","Español","Français","Italiano"
-] as const;
+import { useMemo, useRef, useState } from "react";
+import "./globals.css";
+
+type Item = { x: number; y: number; w: number; h: number; translated: string };
+
+const LANGS: { label: string; code: string; rtl?: boolean }[] = [
+  { label: "English", code: "en" },
+  { label: "Türkçe", code: "tr" },
+  { label: "Русский", code: "ru" },
+  { label: "العربية", code: "ar", rtl: true },
+  { label: "Српски", code: "sr" },
+  { label: "Deutsch", code: "de" },
+  { label: "Español", code: "es" },
+  { label: "Français", code: "fr" },
+  { label: "Italiano", code: "it" }
+];
 
 export default function Page() {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [lang, setLang] = useState(LANGS[0].code);
+  const [rtl, setRtl] = useState(!!LANGS[0].rtl);
   const [file, setFile] = useState<File | null>(null);
-  const [lang, setLang] = useState<(typeof LANGS)[number]>("English");
   const [busy, setBusy] = useState(false);
   const [pngURL, setPngURL] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const pick = (f?: File) => { if (!f) return; setFile(f); setPngURL(null); };
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); };
+  const chosen = useMemo(
+    () => LANGS.find((l) => l.code === lang)!,
+    [lang]
+  );
 
-  const getTranslatedPNG = async () => {
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] || null;
+    setFile(f);
+    setPreviewName(f ? f.name : null);
+    setPngURL(null);
+  }
+
+  async function run() {
     if (!file) return;
-    setBusy(true); setPngURL(null);
+    setBusy(true);
+    setPngURL(null);
 
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("targetLang", lang);
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("lang", lang);
 
-      // 1) bbox + çeviri
-      const { items } = await fetch("/api/translate", { method: "POST", body: form }).then(r => r.json());
-
-      // 2) kaynağı yükle
-      const srcURL = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = async () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d")!;
-        ctx.imageSmoothingEnabled = true;
-        ctx.drawImage(img, 0, 0);
-
-        // opak beyaz, çizgiler görünmeye devam etsin diye sadece satır yüksekliği kadar kaplıyoruz
-        ctx.globalCompositeOperation = "source-over";
-        ctx.textBaseline = "middle";
-        ctx.textAlign = "left";
-
-        for (const it of items as any[]) {
-          const pad = Math.max(1, Math.round(Math.min(it.h, 20) * 0.25)); // ince şerit
-          const x = it.x + 1;
-          const y = it.y + 1;
-          const w = it.w - 2;
-          const h = it.h - 2;
-
-          // alanı temizle
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(x, y, w, h);
-
-          // tek satır sığdır
-          const rtl = lang === "العربية";
-          ctx.textAlign = rtl ? "right" : "left";
-          fitSingleLine(ctx, decodeHtml(it.translated), rtl ? x + w - pad : x + pad, y + h / 2, w - pad * 2, rtl);
-        }
-
-        const blob = await new Promise<Blob>((resolve) =>
-          canvas.toBlob((b) => resolve(b!), "image/png")
-        );
-        const url = URL.createObjectURL(blob);
-        setPngURL(url);
-        URL.revokeObjectURL(srcURL);
-      };
-      img.src = srcURL;
-    } catch (e: any) {
-      alert("Error: " + e.message);
-    } finally {
+    const res = await fetch("/api/translate", { method: "POST", body: fd });
+    if (!res.ok) {
       setBusy(false);
+      alert("OCR/translate failed.");
+      return;
     }
-  };
+    const data: { items: Item[] } = await res.json();
+
+    // draw to canvas with cleanup + overlay
+    const srcURL = URL.createObjectURL(file);
+    const img = new window.Image();
+    img.onload = async () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.imageSmoothingEnabled = true;
+
+      // original image
+      ctx.drawImage(img, 0, 0);
+
+      const arr = (data.items || []) as Item[];
+      const medH = median(arr.map((i) => i.h)) || 18;
+      const vPad = Math.max(2, Math.round(medH * 0.40));
+      const hPad = Math.max(2, Math.round(medH * 0.60));
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.textBaseline = "middle";
+
+      for (const it of arr) {
+        const cx = it.x + it.w / 2;
+        const cy = it.y + it.h / 2;
+
+        const x = Math.max(0, Math.round(it.x - hPad));
+        const y = Math.max(0, Math.round(cy - medH / 2 - vPad));
+        const w = Math.min(canvas.width - x, Math.round(it.w + hPad * 2));
+        const h = Math.min(canvas.height - y, Math.round(medH + vPad * 2));
+
+        // two-pass white fill to fully clear aliasing specks
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(x, y, w, h);
+        ctx.fillRect(x, y, w, h);
+
+        const maxW = Math.max(20, w - 8);
+        ctx.textAlign = chosen.rtl ? "right" : "left";
+        writeFitted(ctx, decodeHtml(it.translated), chosen.rtl ? x + w - 4 : x + 4, y + h / 2, maxW, medH);
+      }
+
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b!), "image/png")
+      );
+      const url = URL.createObjectURL(blob);
+      setPngURL(url);
+      URL.revokeObjectURL(srcURL);
+      setBusy(false);
+    };
+    img.src = srcURL;
+  }
 
   return (
-    <div className="container">
-      <div className="header">
-        <NextImage src="/oratio.png" alt="oratio" width={240} height={72} className="logo" priority />
-        <div className="subtitle">MEDICAL TRANSLATOR</div>
+    <main style={{ maxWidth: 980, margin: "40px auto 80px", padding: "0 16px" }}>
+      {/* Logo */}
+      <div style={{ textAlign: "center", marginBottom: 12, fontSize: 48, fontWeight: 800, letterSpacing: 1 }}>
+        oratio
+      </div>
+      <div style={{ textAlign: "center", opacity: 0.85, marginBottom: 24, fontWeight: 700 }}>
+        MEDICAL TRANSLATOR
       </div>
 
-      <div
-        className="card"
-        onDragOver={(e)=>e.preventDefault()}
-        onDrop={onDrop}
-        onClick={()=>inputRef.current?.click()}
-      >
-        <div style={{width:54,height:42,background:"#7f7f7f",borderRadius:6,opacity:.9}} />
-        <div className="hint">Upload medical document</div>
-        <div className="formats">Allowed formats: PNG, JPG</div>
+      {/* Upload box */}
+      <div className="card" style={{ padding: 22, marginBottom: 16 }}>
+        <div
+          onClick={() => inputRef.current?.click()}
+          style={{
+            border: "1px dashed #2c2c30",
+            background: "#0d0d10",
+            borderRadius: 14,
+            height: 160,
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer"
+          }}
+          title="Choose PNG or JPG"
+        >
+          <div style={{ textAlign: "center", color: "#cfcfd6" }}>
+            <div style={{ fontSize: 22, marginBottom: 6 }}>Upload medical document</div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Allowed formats: PNG, JPG</div>
+            {previewName && (
+              <div style={{ fontSize: 12, marginTop: 10, opacity: 0.8 }}>{previewName}</div>
+            )}
+          </div>
+        </div>
         <input
           ref={inputRef}
           type="file"
           accept="image/png,image/jpeg"
-          className="hidden"
-          onChange={(e)=>pick(e.target.files?.[0]||undefined)}
+          onChange={onPick}
+          style={{ display: "none" }}
         />
-      </div>
 
-      <div className="row">
-        <select className="select" value={lang} onChange={(e)=>setLang(e.target.value as any)}>
-          {LANGS.map(l => <option key={l} value={l}>{l}</option>)}
-        </select>
-
-        <button className="button" disabled={!file || busy} onClick={getTranslatedPNG}>
-          {busy ? "Processing…" : "Get translated PNG"}
-        </button>
-
-        <div className="small">{file ? file.name : "No file selected"}</div>
-
-        {pngURL && (
-          <button
-            className="button"
-            onClick={()=>{
-              const a = document.createElement("a");
-              a.href = pngURL;
-              a.download = "oratio-translation.png";
-              a.click();
+        {/* language */}
+        <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+          <select
+            value={lang}
+            onChange={(e) => {
+              setLang(e.target.value);
+              const r = LANGS.find((l) => l.code === e.target.value)?.rtl;
+              setRtl(!!r);
             }}
-            style={{marginTop:10}}
+            style={{ padding: "12px 14px", flex: "0 0 260px" }}
           >
-            Download PNG
+            {LANGS.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={run}
+            disabled={!file || busy}
+            style={{
+              background: busy ? "#27272b" : "#ffffff",
+              color: busy ? "#8b8b92" : "#111114",
+              flex: 1
+            }}
+          >
+            {busy ? "Translating…" : "Get translated PNG"}
           </button>
-        )}
+        </div>
       </div>
-    </div>
+
+      {/* result preview + download */}
+      {pngURL && (
+        <div className="card" style={{ padding: 18 }}>
+          <div style={{ display: "grid", placeItems: "center" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={pngURL}
+              alt="translated"
+              style={{ maxWidth: "100%", background: "#fff", borderRadius: 8 }}
+            />
+          </div>
+          <div style={{ display: "grid", placeItems: "center", marginTop: 18 }}>
+            <a
+              href={pngURL}
+              download="translated.png"
+              style={{
+                display: "inline-block",
+                background: "#fff",
+                color: "#111114",
+                padding: "12px 18px",
+                borderRadius: 10,
+                fontWeight: 700,
+                textDecoration: "none"
+              }}
+            >
+              Download PNG
+            </a>
+          </div>
+        </div>
+      )}
+    </main>
   );
 }
 
-/* ---- metni tek satıra sığdır ---- */
-function fitSingleLine(
+/* helpers */
+function median(a: number[]) {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function writeFitted(
   ctx: CanvasRenderingContext2D,
   text: string,
-  x: number, cy: number, maxW: number, rtl: boolean
+  x: number,
+  cy: number,
+  maxW: number,
+  refH: number
 ) {
   const family = "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-  // yükseklikten başla, genişliğe göre küçült
-  let size = Math.max(10, Math.min(24, Math.floor(maxW * 0.08)));
+  let size = Math.max(9, Math.floor(refH * 0.85));
   for (; size >= 8; size--) {
     ctx.font = `${size}px ${family}`;
     const w = ctx.measureText(text).width;
     if (w <= maxW) {
       ctx.fillStyle = "#000";
-      if (rtl) ctx.fillText(text, x, cy);
-      else ctx.fillText(text, x, cy);
+      ctx.fillText(text, x, cy);
       return;
     }
   }
-  // sığmazsa kısalt
-  size = 8; ctx.font = `${size}px ${family}`;
-  const ell = ellipsize(ctx, text, maxW);
-  ctx.fillStyle = "#000";
-  ctx.fillText(ell, x, cy);
-}
-
-function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number) {
+  ctx.font = `8px ${family}`;
   let t = text;
   while (ctx.measureText(t + "…").width > maxW && t.length > 1) t = t.slice(0, -1);
-  return t + "…";
+  ctx.fillStyle = "#000";
+  ctx.fillText(t + "…", x, cy);
 }
 
 function decodeHtml(s: string) {
-  const el = document.createElement("textarea"); el.innerHTML = s;
+  const el = document.createElement("textarea");
+  el.innerHTML = s;
   return el.value;
 }
+
 
 
 
