@@ -1,7 +1,7 @@
 // app/page.tsx
 "use client";
 
-import Image from "next/image";
+import NextImage from "next/image"; // <-- ADI DEGISTI
 import { useRef, useState } from "react";
 
 type UiLang =
@@ -103,7 +103,7 @@ export default function Page() {
 
       ctx.imageSmoothingEnabled = true;
       // @ts-ignore
-      if (ctx.imageSmoothingQuality) (ctx as any).imageSmoothingQuality = "high";
+      if ((ctx as any).imageSmoothingQuality) (ctx as any).imageSmoothingQuality = "high";
 
       // Arkaplanı çiz
       ctx.clearRect(0, 0, cw, ch);
@@ -161,7 +161,7 @@ export default function Page() {
     >
       {/* Logo & Başlık */}
       <div style={{ width: "100%", maxWidth: 880 }}>
-        <Image
+        <NextImage
           src="/oratio.png"
           alt="oratio"
           width={148}
@@ -297,7 +297,7 @@ export default function Page() {
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const img = new Image();
+    const img = new window.Image(); // <-- DOM Image constructor
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = url;
@@ -407,6 +407,7 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   if (buf) out.push(buf);
   return out;
 }
+
 
 
 
