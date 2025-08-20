@@ -1,5 +1,7 @@
+// app/page.tsx
 "use client";
 
+import Image from "next/image";
 import { useRef, useState } from "react";
 
 type UiLang =
@@ -39,11 +41,35 @@ export default function Page() {
   const [lang, setLang] = useState<UiLang>("English");
   const [busy, setBusy] = useState(false);
   const [downloadURL, setDownloadURL] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFile(e.target.files?.[0] ?? null);
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
     setDownloadURL(null);
+  };
+
+  const openPicker = () => inputRef.current?.click();
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f && /^image\/(png|jpe?g)$/.test(f.type)) {
+      setFile(f);
+      setDownloadURL(null);
+    }
+  };
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragging(false);
   };
 
   async function onTranslatePNG() {
@@ -135,13 +161,20 @@ export default function Page() {
     >
       {/* Logo & Başlık */}
       <div style={{ width: "100%", maxWidth: 880 }}>
-        <div style={{ fontSize: 56, fontWeight: 800, letterSpacing: 1 }}>oratio</div>
+        <Image
+          src="/oratio.png"
+          alt="oratio"
+          width={148}
+          height={40}
+          priority
+          style={{ height: 40, width: "auto" }}
+        />
         <div style={{ marginTop: 8, fontSize: 28, opacity: 0.9 }}>
           MEDICAL TRANSLATOR
         </div>
       </div>
 
-      {/* Upload alanı */}
+      {/* Upload alanı (tıklanabilir + drag&drop) */}
       <div
         style={{
           width: "100%",
@@ -153,30 +186,49 @@ export default function Page() {
         }}
       >
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="Click to upload or drag & drop"
+          onClick={openPicker}
+          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && openPicker()}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
           style={{
-            border: "1px dashed #444",
+            border: dragging ? "2px dashed #7c9cff" : "1px dashed #444",
+            transition: "border-color 120ms ease, background 120ms ease",
+            background: dragging ? "#20202a" : "transparent",
             borderRadius: 12,
             height: 160,
             display: "grid",
             placeItems: "center",
             marginBottom: 20,
+            cursor: "pointer",
+            userSelect: "none",
           }}
         >
-          <label
-            htmlFor="file"
-            style={{
-              fontSize: 22,
-              cursor: "pointer",
-              opacity: 0.95,
-            }}
-          >
-            Upload medical document
-          </label>
-          <input id="file" type="file" accept="image/png,image/jpeg" hidden onChange={onFile} />
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 22, opacity: 0.95 }}>
+              {file ? file.name : "Upload medical document"}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.6 }}>
+              Click to upload or drag &amp; drop
+            </div>
+          </div>
+
+          <input
+            ref={inputRef}
+            id="file"
+            type="file"
+            accept="image/png,image/jpeg"
+            hidden
+            onChange={onFile}
+          />
         </div>
+
         <div style={{ opacity: 0.7, marginBottom: 20 }}>Allowed formats: PNG, JPG</div>
 
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <select
             value={lang}
             onChange={(e) => setLang(e.target.value as UiLang)}
@@ -256,7 +308,7 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-// Basit HTML entity çözümü (sunucu tarafında format:"text" ile zaten kapattık; bu yedek)
+// Basit HTML entity çözümü
 function decodeHTMLEntities(s: string) {
   return s
     .replace(/&quot;/g, '"')
@@ -355,6 +407,7 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   if (buf) out.push(buf);
   return out;
 }
+
 
 
 
