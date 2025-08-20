@@ -1,5 +1,4 @@
-'use client';
-
+"use client";
 import NextImage from "next/image";
 import { useRef, useState } from "react";
 
@@ -12,107 +11,70 @@ export default function Page() {
   const [file, setFile] = useState<File | null>(null);
   const [lang, setLang] = useState<(typeof LANGS)[number]>("English");
   const [busy, setBusy] = useState(false);
-  const [txt, setTxt] = useState<string>("");
+  const [pngURL, setPngURL] = useState<string | null>(null);
 
-  const pick = (f?: File) => { if (!f) return; setFile(f); setTxt(""); };
+  const pick = (f?: File) => { if (!f) return; setFile(f); setPngURL(null); };
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); };
 
-  const run = async () => {
+  const getTranslatedPNG = async () => {
     if (!file) return;
-    setBusy(true); setTxt("");
+    setBusy(true); setPngURL(null);
+
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("targetLang", lang);
-      const res = await fetch("/api/translate", { method: "POST", body: form });
-      if (!res.ok) throw new Error(await res.text());
-      const out = await res.text();
-      setTxt(out);
-    } catch (e:any) {
+
+      // 1) bbox + çeviri
+      const { items } = await fetch("/api/translate", { method: "POST", body: form }).then(r => r.json());
+
+      // 2) kaynağı yükle
+      const srcURL = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(img, 0, 0);
+
+        // opak beyaz, çizgiler görünmeye devam etsin diye sadece satır yüksekliği kadar kaplıyoruz
+        ctx.globalCompositeOperation = "source-over";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+
+        for (const it of items as any[]) {
+          const pad = Math.max(1, Math.round(Math.min(it.h, 20) * 0.25)); // ince şerit
+          const x = it.x + 1;
+          const y = it.y + 1;
+          const w = it.w - 2;
+          const h = it.h - 2;
+
+          // alanı temizle
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(x, y, w, h);
+
+          // tek satır sığdır
+          const rtl = lang === "العربية";
+          ctx.textAlign = rtl ? "right" : "left";
+          fitSingleLine(ctx, decodeHtml(it.translated), rtl ? x + w - pad : x + pad, y + h / 2, w - pad * 2, rtl);
+        }
+
+        const blob = await new Promise<Blob>((resolve) =>
+          canvas.toBlob((b) => resolve(b!), "image/png")
+        );
+        const url = URL.createObjectURL(blob);
+        setPngURL(url);
+        URL.revokeObjectURL(srcURL);
+      };
+      img.src = srcURL;
+    } catch (e: any) {
       alert("Error: " + e.message);
-    } finally { setBusy(false); }
-  };
-
-  const downloadTXT = () => {
-    const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "oratio-translation.txt"; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // ---------- PNG ÜRETİMİ ----------
-  function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
-    const words = text.split(/\s+/);
-    const lines: string[] = [];
-    let line = "";
-    for (const w of words) {
-      const test = line ? line + " " + w : w;
-      if (ctx.measureText(test).width > maxWidth) {
-        if (line) lines.push(line);
-        line = w;
-      } else {
-        line = test;
-      }
+    } finally {
+      setBusy(false);
     }
-    if (line) lines.push(line);
-    return lines;
-  }
-
-  function downloadPNG(sourceFile: File, text: string, language: string) {
-    const imgURL = URL.createObjectURL(sourceFile);
-    const img = new window.Image();   // <= kritik düzeltme
-
-    img.onload = () => {
-      const pad = 24;
-      const dpi = 2;
-      const textWidth = Math.min(900, img.width);
-
-      const measure = document.createElement("canvas").getContext("2d")!;
-      measure.font = "16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-      const lines = wrapText(measure, text, textWidth);
-      const lineHeight = 20;
-      const textHeight = lines.length * lineHeight;
-
-      const width = Math.max(img.width, textWidth) + pad * 2;
-      const height = img.height + pad + textHeight + pad * 2;
-
-      const canvas = document.createElement("canvas");
-      canvas.width = width * dpi;
-      canvas.height = height * dpi;
-      const ctx = canvas.getContext("2d")!;
-      ctx.scale(dpi, dpi);
-
-      ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, width, height);
-
-      const ix = (width - img.width) / 2;
-      ctx.drawImage(img, ix, pad, img.width, img.height);
-
-      ctx.fillStyle = "#fff";
-      ctx.font = "16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-      // @ts-ignore – RTL
-      ctx.direction = language === "العربية" ? "rtl" : "ltr";
-
-      let x = pad;
-      let y = img.height + pad * 2;
-      for (const line of lines) {
-        ctx.fillText(line, x, y);
-        y += lineHeight;
-      }
-
-      canvas.toBlob((b) => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(b!);
-        a.download = "oratio-translation.png";
-        a.click();
-        URL.revokeObjectURL(imgURL);
-      }, "image/png");
-    };
-
-    img.src = imgURL;
-  }
-  // ---------- PNG ÜRETİMİ SON ----------
+  };
 
   return (
     <div className="container">
@@ -144,23 +106,66 @@ export default function Page() {
           {LANGS.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
 
-        <button className="button" disabled={!file || busy} onClick={run}>
-          {busy ? "Translating…" : "Get translated TXT"}
+        <button className="button" disabled={!file || busy} onClick={getTranslatedPNG}>
+          {busy ? "Processing…" : "Get translated PNG"}
         </button>
 
         <div className="small">{file ? file.name : "No file selected"}</div>
 
-        {txt && (
-          <>
-            <pre className="out">{txt}</pre>
-            <button className="button" onClick={downloadTXT}>Download TXT</button>
-            <button className="button" onClick={()=> downloadPNG(file!, txt, lang)} style={{marginTop:10}}>
-              Download PNG
-            </button>
-          </>
+        {pngURL && (
+          <button
+            className="button"
+            onClick={()=>{
+              const a = document.createElement("a");
+              a.href = pngURL;
+              a.download = "oratio-translation.png";
+              a.click();
+            }}
+            style={{marginTop:10}}
+          >
+            Download PNG
+          </button>
         )}
       </div>
     </div>
   );
 }
+
+/* ---- metni tek satıra sığdır ---- */
+function fitSingleLine(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number, cy: number, maxW: number, rtl: boolean
+) {
+  const family = "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  // yükseklikten başla, genişliğe göre küçült
+  let size = Math.max(10, Math.min(24, Math.floor(maxW * 0.08)));
+  for (; size >= 8; size--) {
+    ctx.font = `${size}px ${family}`;
+    const w = ctx.measureText(text).width;
+    if (w <= maxW) {
+      ctx.fillStyle = "#000";
+      if (rtl) ctx.fillText(text, x, cy);
+      else ctx.fillText(text, x, cy);
+      return;
+    }
+  }
+  // sığmazsa kısalt
+  size = 8; ctx.font = `${size}px ${family}`;
+  const ell = ellipsize(ctx, text, maxW);
+  ctx.fillStyle = "#000";
+  ctx.fillText(ell, x, cy);
+}
+
+function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number) {
+  let t = text;
+  while (ctx.measureText(t + "…").width > maxW && t.length > 1) t = t.slice(0, -1);
+  return t + "…";
+}
+
+function decodeHtml(s: string) {
+  const el = document.createElement("textarea"); el.innerHTML = s;
+  return el.value;
+}
+
 
