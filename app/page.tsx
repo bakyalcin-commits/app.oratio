@@ -7,12 +7,18 @@ const LANGS = [
   "English","Türkçe","Русский","العربية","Српски","Deutsch","Español","Français","Italiano"
 ] as const;
 
+type LayoutMode = "bottom" | "side" | "text";
+
 export default function Page() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [lang, setLang] = useState<(typeof LANGS)[number]>("English");
   const [busy, setBusy] = useState(false);
   const [txt, setTxt] = useState<string>("");
+
+  // yeni: export tercihleri
+  const [layout, setLayout] = useState<LayoutMode>("bottom");
+  const [fontSize, setFontSize] = useState<number>(16);
 
   const pick = (f?: File) => { if (!f) return; setFile(f); setTxt(""); };
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); };
@@ -59,23 +65,50 @@ export default function Page() {
     return lines;
   }
 
-  function downloadPNG(sourceFile: File, text: string, language: string) {
+  function downloadPNG(
+    sourceFile: File,
+    text: string,
+    language: string,
+    mode: LayoutMode,
+    fs: number
+  ) {
     const imgURL = URL.createObjectURL(sourceFile);
-    const img = new window.Image();   // <= kritik düzeltme
+    const img = new window.Image();
 
     img.onload = () => {
-      const pad = 24;
-      const dpi = 2;
-      const textWidth = Math.min(900, img.width);
+      const pad = 36;           // dış kenar boşluğu
+      const gutter = 28;        // görsel-metni ayıran boşluk
+      const dpi = 2;            // daha keskin PNG
+      const font = `${fs}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
 
+      // ölçüm context'i
       const measure = document.createElement("canvas").getContext("2d")!;
-      measure.font = "16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-      const lines = wrapText(measure, text, textWidth);
-      const lineHeight = 20;
-      const textHeight = lines.length * lineHeight;
+      measure.font = font;
 
-      const width = Math.max(img.width, textWidth) + pad * 2;
-      const height = img.height + pad + textHeight + pad * 2;
+      // metin genişliği hedefi
+      const bottomTextWidth = Math.min(1100, img.width);
+      const sideTextWidth   = Math.max(380, Math.min(900, Math.floor(img.width * 0.6)));
+
+      const textWidth = mode === "side" ? sideTextWidth
+                        : mode === "text" ? Math.min(1200, 1000)
+                        : bottomTextWidth;
+
+      const lines = wrapText(measure, text, textWidth);
+      const lineHeight = Math.ceil(fs * 1.25);
+      const textHeight = Math.max(lineHeight, lines.length * lineHeight);
+
+      // tuval boyutları
+      let width: number, height: number;
+      if (mode === "side") {
+        width  = img.width + gutter + textWidth + pad * 2;
+        height = Math.max(img.height, textHeight) + pad * 2;
+      } else if (mode === "text") {
+        width  = textWidth + pad * 2;
+        height = textHeight + pad * 2;
+      } else { // bottom
+        width  = Math.max(img.width, textWidth) + pad * 2;
+        height = img.height + gutter + textHeight + pad * 2;
+      }
 
       const canvas = document.createElement("canvas");
       canvas.width = width * dpi;
@@ -83,22 +116,46 @@ export default function Page() {
       const ctx = canvas.getContext("2d")!;
       ctx.scale(dpi, dpi);
 
-      ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, width, height);
-
-      const ix = (width - img.width) / 2;
-      ctx.drawImage(img, ix, pad, img.width, img.height);
-
+      // beyaz arka plan, siyah metin (print friendly)
       ctx.fillStyle = "#fff";
-      ctx.font = "16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-      // @ts-ignore – RTL
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = "#000";
+      ctx.font = font;
+      // @ts-ignore – RTL desteği
       ctx.direction = language === "العربية" ? "rtl" : "ltr";
 
-      let x = pad;
-      let y = img.height + pad * 2;
-      for (const line of lines) {
-        ctx.fillText(line, x, y);
-        y += lineHeight;
+      // çizimler
+      if (mode === "side") {
+        // görüntü sol, metin sağ
+        const ix = pad;
+        const iy = (height - img.height) / 2;
+        ctx.drawImage(img, ix, iy, img.width, img.height);
+
+        let x = ix + img.width + gutter;
+        let y = pad + lineHeight;
+        for (const line of lines) {
+          ctx.fillText(line, x, y);
+          y += lineHeight;
+        }
+      } else if (mode === "text") {
+        // sadece metin
+        let x = pad;
+        let y = pad + lineHeight;
+        for (const line of lines) {
+          ctx.fillText(line, x, y);
+          y += lineHeight;
+        }
+      } else {
+        // bottom: görüntü üstte, metin altta
+        const ix = (width - img.width) / 2;
+        ctx.drawImage(img, ix, pad, img.width, img.height);
+
+        let x = pad;
+        let y = pad + img.height + gutter + lineHeight;
+        for (const line of lines) {
+          ctx.fillText(line, x, y);
+          y += lineHeight;
+        }
       }
 
       canvas.toBlob((b) => {
@@ -150,11 +207,33 @@ export default function Page() {
 
         <div className="small">{file ? file.name : "No file selected"}</div>
 
+        {/* Export tercihi ve font boyutu */}
+        <div className="row" style={{gridTemplateColumns:"1fr 1fr"}}>
+          <select className="select" value={layout} onChange={(e)=>setLayout(e.target.value as LayoutMode)}>
+            <option value="bottom">Export layout: Image + Text (bottom)</option>
+            <option value="side">Export layout: Side by side</option>
+            <option value="text">Export layout: Text only</option>
+          </select>
+          <input
+            className="select"
+            type="number"
+            min={12}
+            max={28}
+            value={fontSize}
+            onChange={(e)=>setFontSize(parseInt(e.target.value || "16", 10))}
+            placeholder="Font size"
+          />
+        </div>
+
         {txt && (
           <>
             <pre className="out">{txt}</pre>
             <button className="button" onClick={downloadTXT}>Download TXT</button>
-            <button className="button" onClick={()=> downloadPNG(file!, txt, lang)} style={{marginTop:10}}>
+            <button
+              className="button"
+              onClick={()=> downloadPNG(file!, txt, lang, layout, fontSize)}
+              style={{marginTop:10}}
+            >
               Download PNG
             </button>
           </>
@@ -163,4 +242,5 @@ export default function Page() {
     </div>
   );
 }
+
 
