@@ -1,6 +1,5 @@
-// app/api/translate/route.ts
 import type { NextRequest } from "next/server";
-import { preprocess } from "@/lib/preprocess";
+import { preprocess } from "../../../lib/preprocess"; // <- relative import
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,29 +37,13 @@ export async function POST(req: NextRequest) {
     const target = LANG[targetUi] ?? "en";
 
     if (!file) return new Response("file missing", { status: 400 });
-    if (!API_KEY) return new Response("API key missing", { status: 500 });
 
-    // Orijinal buffer
-    const originalBuffer = Buffer.from(await file.arrayBuffer());
-
-    // OCR için ön-işleme (başarısız olursa orijinali kullan)
-    let ocrBuffer = originalBuffer;
-    try {
-      const pre = await preprocess(originalBuffer, {
-        threshold: 180,
-        blur: 0.6,
-        targetWidth: 2000,
-        invert: false,
-      });
-      ocrBuffer = pre.buffer;
-    } catch {
-      // no-op: fallback to originalBuffer
-    }
-
-    // Google Vision -> base64 içerik
-    const bytes = ocrBuffer.toString("base64");
+    // 0) Görseli OCR öncesi temizle (deskew/normalize). Hata olursa orijinalle devam et.
+    const origBuf = Buffer.from(await file.arrayBuffer());
+    const workBuf = await preprocess(origBuf).catch(() => origBuf);
 
     // 1) OCR
+    const bytes = workBuf.toString("base64");
     const vres = await fetch(VISION_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -74,11 +57,12 @@ export async function POST(req: NextRequest) {
       }),
     });
     if (!vres.ok) return new Response(await vres.text(), { status: 500 });
+
     const vjson = await vres.json();
     const page = vjson?.responses?.[0]?.fullTextAnnotation?.pages?.[0];
     if (!page) return Response.json({ items: [] });
 
-    // 2) Kelime → satır gruplama (line-level bbox)
+    // 2) KELİME → SATIR gruplama (line-level bbox)
     const lines: Array<{ x: number; y: number; w: number; h: number; text: string }> = [];
 
     for (const block of page.blocks ?? []) {
@@ -89,7 +73,7 @@ export async function POST(req: NextRequest) {
 
         const flush = () => {
           const t = accText.trim();
-          if (t.length > 0 && /[A-Za-z0-9ĞÜŞİğıöçÇÖŞÜ]/.test(t)) {
+          if (t.length > 0 && /[A-Za-z0-9ĞÜŞİİğıöçÇÖŞÜ]/.test(t)) {
             const x = Math.min(...accXs);
             const y = Math.min(...accYs);
             const w = Math.max(...accXs) - x;
@@ -121,13 +105,14 @@ export async function POST(req: NextRequest) {
 
     if (!lines.length) return Response.json({ items: [] });
 
-    // 3) Toplu çeviri
+    // 3) Çeviri (toplu)
     const tres = await fetch(TRANSLATE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ q: lines.map((l) => l.text), target }),
     });
     if (!tres.ok) return new Response(await tres.text(), { status: 500 });
+
     const tjson = await tres.json();
     const translated =
       tjson?.data?.translations?.map((t: any) => t.translatedText) ?? [];
@@ -142,5 +127,6 @@ export async function POST(req: NextRequest) {
     return new Response(String(e?.message || e), { status: 500 });
   }
 }
+
 
 
