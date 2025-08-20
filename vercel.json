@@ -1,6 +1,0 @@
-{
-  "framework": "other",
-  "buildCommand": "echo 'skip'",
-  "outputDirectory": "public"
-}
-
