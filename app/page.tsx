@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 type UiLang =
   | "English"
@@ -13,17 +13,17 @@ type UiLang =
   | "Français"
   | "Italiano";
 
-const LANGS: UiLang[] = [
-  "English",
-  "Türkçe",
-  "Русский",
-  "العربية",
-  "Српски",
-  "Deutsch",
-  "Español",
-  "Français",
-  "Italiano",
-];
+const LANG_CODE: Record<UiLang, string> = {
+  English: "en",
+  "Türkçe": "tr",
+  Русский: "ru",
+  العربية: "ar",
+  Српски: "sr",
+  Deutsch: "de",
+  Español: "es",
+  Français: "fr",
+  Italiano: "it",
+};
 
 type Item = {
   x: number;
@@ -36,184 +36,299 @@ type Item = {
 
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
-  const [targetLang, setTargetLang] = useState<UiLang>("English");
+  const [lang, setLang] = useState<UiLang>("English");
   const [busy, setBusy] = useState(false);
-  const [outUrl, setOutUrl] = useState<string | null>(null);
+  const [downloadURL, setDownloadURL] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const imgURL = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
-
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] ?? null;
-    setFile(f);
-    setOutUrl(null);
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFile(e.target.files?.[0] ?? null);
+    setDownloadURL(null);
   };
 
-  const handleTranslate = async () => {
+  async function onTranslatePNG() {
     if (!file) return;
     setBusy(true);
-    setOutUrl(null);
+    setDownloadURL(null);
 
     try {
-      // 1) API'ye gönder
+      // 1) OCR + TRANSLATE
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("targetLang", targetLang);
+      fd.append("targetLang", lang);
+      const res = await fetch("/api/translate", { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await res.text());
+      const data: { items: Item[] } = await res.json();
+      const items = data.items ?? [];
 
-      const r = await fetch("/api/translate", { method: "POST", body: fd });
-      if (!r.ok) {
-        const t = await r.text();
-        throw new Error(t || "translate failed");
-      }
-      const { items }: { items: Item[] } = await r.json();
+      // 2) Kaynak görseli yükle
+      const imgURL = URL.createObjectURL(file);
+      const img = await loadImage(imgURL);
 
-      // 2) Görseli yükle
-      const img = await loadImage(URL.createObjectURL(file));
+      // 3) Canvas kur
+      const SCALE = 2; // çıktıyı keskinleştir
+      const cw = img.width * SCALE;
+      const ch = img.height * SCALE;
 
-      // 3) Kanvas oluştur
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth || img.width;
-      canvas.height = img.naturalHeight || img.height;
+      const canvas = canvasRef.current!;
       const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.width = cw;
+      canvas.height = ch;
 
-      // 4) Kutu üstünü sil + çeviriyi yaz
-      const isRTL = targetLang === "العربية";
-      ctx.direction = (isRTL ? "rtl" : "ltr") as CanvasDirection; // << düzeltildi
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "#000";
+      // Arkaplanı çiz
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.drawImage(img, 0, 0, cw, ch);
 
+      // 4) Kutuları maskele + çevirileri yaz
+      const rtl = LANG_CODE[lang] === "ar"; // şimdilik sadece Arapça RTL
       for (const it of items) {
-        const pad = Math.max(2, Math.floor(it.h * 0.15));
-        // altındaki yazıyı kapat
-        ctx.fillStyle = "rgba(255,255,255,0.98)";
-        ctx.fillRect(it.x - pad, it.y - pad, it.w + pad * 2, it.h + pad * 2);
+        const x = Math.max(0, Math.round(it.x * SCALE));
+        const y = Math.max(0, Math.round(it.y * SCALE));
+        const w = Math.max(1, Math.round(it.w * SCALE));
+        const h = Math.max(1, Math.round(it.h * SCALE));
 
-        // font boyu satır yüksekliğine göre
-        const fontPx = clamp(Math.floor(it.h * 0.8), 10, 48);
-        ctx.font = `${fontPx}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+        // orijinal yazıyı sil (beyaz maske)
+        ctx.fillStyle = "rgba(255,255,255,0.96)";
+        ctx.fillRect(x, y, w, h);
 
-        // hizalama
-        ctx.textAlign = isRTL ? "right" : "left";
-        ctx.fillStyle = "#000";
-
-        // yazı konumu
-        const tx = isRTL ? it.x + it.w - pad : it.x + pad;
-        const ty = it.y + it.h / 2;
-
-        // çok uzun satırlarda ufak küçültme
-        const text = decodeHtml(it.translated || it.text);
-        const maxWidth = it.w - pad * 2;
-        const fitted = fitText(ctx, text, maxWidth);
-        ctx.fillText(fitted, tx, ty, maxWidth);
+        // çeviriyi kutuya sığdır
+        drawTextInBox(ctx, it.translated || it.text, x, y, w, h, rtl);
       }
 
-      setOutUrl(canvas.toDataURL("image/png"));
+      // 5) PNG indir linki
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b as Blob), "image/png")
+      );
+      const url = URL.createObjectURL(blob);
+      setDownloadURL(url);
+
+      URL.revokeObjectURL(imgURL);
     } catch (e: any) {
       alert(e?.message || String(e));
     } finally {
       setBusy(false);
     }
-  };
-
-  const onDownload = () => {
-    if (!outUrl) return;
-    const a = document.createElement("a");
-    a.href = outUrl;
-    a.download = "translated.png";
-    a.click();
-  };
+  }
 
   return (
-    <main className="min-h-screen bg-neutral-900 text-white px-4 py-8 flex flex-col items-center gap-6">
-      <h1 className="text-5xl font-extrabold tracking-tight">oratio</h1>
-      <h2 className="text-xl opacity-80">MEDICAL TRANSLATOR</h2>
-
-      {/* upload kartı */}
-      <label className="w-full max-w-3xl rounded-2xl bg-neutral-800/60 border border-neutral-700/60 p-10 flex flex-col items-center gap-3 cursor-pointer hover:bg-neutral-800 transition">
-        <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={onPick} />
-        <div className="text-2xl opacity-90">Upload medical document</div>
-        <div className="text-sm opacity-60">Allowed formats: PNG, JPG</div>
-        {file && <div className="text-xs mt-2 opacity-60">{file.name}</div>}
-      </label>
-
-      {/* dil seçimi */}
-      <div className="w-full max-w-3xl">
-        <select
-          value={targetLang}
-          onChange={(e) => setTargetLang(e.target.value as UiLang)}
-          className="w-full rounded-xl bg-neutral-800 border border-neutral-700 p-4"
-        >
-          {LANGS.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </select>
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#0b0b0d",
+        color: "#eaeaea",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 24,
+        padding: "48px 16px 64px",
+      }}
+    >
+      {/* Logo & Başlık */}
+      <div style={{ width: "100%", maxWidth: 880 }}>
+        <div style={{ fontSize: 56, fontWeight: 800, letterSpacing: 1 }}>oratio</div>
+        <div style={{ marginTop: 8, fontSize: 28, opacity: 0.9 }}>
+          MEDICAL TRANSLATOR
+        </div>
       </div>
 
-      {/* işleme butonu */}
-      <button
-        onClick={handleTranslate}
-        disabled={!file || busy}
-        className="w-full max-w-3xl rounded-xl bg-white text-black py-3 font-semibold disabled:opacity-50"
+      {/* Upload alanı */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 880,
+          borderRadius: 16,
+          background: "#17171b",
+          border: "1px solid #2a2a31",
+          padding: 28,
+        }}
       >
-        {busy ? "Processing…" : "Get translated PNG"}
-      </button>
-
-      {/* çıktı önizleme & indirme */}
-      {outUrl && (
-        <>
-          <div className="w-full max-w-3xl rounded-xl overflow-hidden bg-black/30 border border-neutral-700">
-            {/* büyük görseli sayfayı taşırmasın diye container içinde tutuyoruz */}
-            <img src={outUrl} alt="translated" className="w-full h-auto block" />
-          </div>
-          <button
-            onClick={onDownload}
-            className="w-full max-w-3xl rounded-xl bg-white text-black py-3 font-semibold"
+        <div
+          style={{
+            border: "1px dashed #444",
+            borderRadius: 12,
+            height: 160,
+            display: "grid",
+            placeItems: "center",
+            marginBottom: 20,
+          }}
+        >
+          <label
+            htmlFor="file"
+            style={{
+              fontSize: 22,
+              cursor: "pointer",
+              opacity: 0.95,
+            }}
           >
-            Download PNG
+            Upload medical document
+          </label>
+          <input id="file" type="file" accept="image/png,image/jpeg" hidden onChange={onFile} />
+        </div>
+        <div style={{ opacity: 0.7, marginBottom: 20 }}>Allowed formats: PNG, JPG</div>
+
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <select
+            value={lang}
+            onChange={(e) => setLang(e.target.value as UiLang)}
+            style={{
+              background: "#101013",
+              color: "#eaeaea",
+              border: "1px solid #2a2a31",
+              borderRadius: 8,
+              padding: "10px 12px",
+              minWidth: 160,
+              outline: "none",
+            }}
+          >
+            {Object.keys(LANG_CODE).map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={onTranslatePNG}
+            disabled={!file || busy}
+            style={{
+              background: file && !busy ? "#fff" : "#2c2c32",
+              color: file && !busy ? "#111" : "#888",
+              fontWeight: 700,
+              borderRadius: 10,
+              padding: "10px 16px",
+              border: "none",
+              cursor: file && !busy ? "pointer" : "not-allowed",
+            }}
+          >
+            {busy ? "Working..." : "Get translated PNG"}
           </button>
-        </>
-      )}
+
+          {downloadURL && (
+            <a
+              href={downloadURL}
+              download="translated.png"
+              style={{ marginLeft: 8, textDecoration: "underline" }}
+            >
+              Download PNG
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* Önizleme Canvas */}
+      <div style={{ width: "100%", maxWidth: 880 }}>
+        <canvas
+          ref={canvasRef}
+          style={{
+            width: "100%",
+            borderRadius: 12,
+            background: "#111",
+            border: "1px solid #2a2a31",
+          }}
+        />
+      </div>
     </main>
   );
 }
 
-/* ---------------- helpers ---------------- */
+/* ————— yardımcılar ————— */
 
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((res, rej) => {
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => res(img);
-    img.onerror = rej;
-    img.src = src;
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
   });
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
+/**
+ * Kutuya sığacak şekilde fontu küçültür, metni satırlara böler ve çizer.
+ */
+function drawTextInBox(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rtl: boolean
+) {
+  const pad = Math.max(6, Math.floor(Math.min(w, h) * 0.08));
+  const lineGap = 1.25; // satır yüksekliği oranı
+  const family = `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
 
-// HTML entity'leri çözer (Çeviri API sıklıkla &amp; vb. döndürebilir)
-function decodeHtml(s: string) {
-  const el = document.createElement("textarea");
-  el.innerHTML = s;
-  return el.value;
-}
+  // 1) Font boyutunu kutuya sığdırana kadar küçült
+  let fontSize = Math.max(10, Math.floor(h * 0.7));
+  let lines: string[] = [];
 
-// Çok uzun satırı kutuya sığdırmak için basit kısaltma
-function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
-  if (ctx.measureText(text).width <= maxWidth) return text;
-  let lo = 0;
-  let hi = text.length;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    const t = text.slice(0, mid) + "…";
-    if (ctx.measureText(t).width <= maxWidth) lo = mid;
-    else hi = mid - 1;
+  while (fontSize >= 10) {
+    ctx.font = `${fontSize}px ${family}`;
+    lines = wrapLines(ctx, text, w - pad * 2);
+
+    const needH = lines.length * fontSize * lineGap;
+    const widest = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
+    if (needH <= h - pad * 2 && widest <= w - pad * 2) break;
+
+    fontSize -= 1;
   }
-  return text.slice(0, lo) + "…";
+
+  // 2) Çizim
+  ctx.fillStyle = "#111"; // koyu yazı
+  ctx.textBaseline = "top";
+  ctx.textAlign = rtl ? "right" : "left";
+
+  // RTL için başlangıç x’i sağa yasla
+  const startX = rtl ? x + w - pad : x + pad;
+  let cy = y + pad;
+
+  for (const ln of lines) {
+    ctx.fillText(ln, startX, cy);
+    cy += fontSize * lineGap;
+    if (cy > y + h - pad) break; // güvenlik
+  }
 }
+
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let line = "";
+
+  for (const w of words) {
+    const test = line ? line + " " + w : w;
+    if (ctx.measureText(test).width <= maxWidth) {
+      line = test;
+    } else {
+      if (line) out.push(line);
+      // çok uzun tek bir kelime varsa parçala
+      if (ctx.measureText(w).width > maxWidth) {
+        out.push(...breakLongWord(ctx, w, maxWidth));
+        line = "";
+      } else {
+        line = w;
+      }
+    }
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: number): string[] {
+  let buf = "";
+  const out: string[] = [];
+  for (const ch of word) {
+    const t = buf + ch;
+    if (ctx.measureText(t).width <= maxWidth) {
+      buf = t;
+    } else {
+      if (buf) out.push(buf);
+      buf = ch;
+    }
+  }
+  if (buf) out.push(buf);
+  return out;
+}
+
 
 
 
