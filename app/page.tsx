@@ -1,6 +1,6 @@
 'use client';
 
-import Image from "next/image";
+import NextImage from "next/image";
 import { useRef, useState } from "react";
 
 const LANGS = [
@@ -41,7 +41,7 @@ export default function Page() {
     URL.revokeObjectURL(url);
   };
 
-  // --- PNG üretimi (orijinal görsel + altına çeviri metni) ---
+  // ---------- PNG ÜRETİMİ ----------
   function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
     const words = text.split(/\s+/);
     const lines: string[] = [];
@@ -61,7 +61,8 @@ export default function Page() {
 
   function downloadPNG(sourceFile: File, text: string, language: string) {
     const imgURL = URL.createObjectURL(sourceFile);
-    const img = new Image();
+    const img = new window.Image();   // <= kritik düzeltme
+
     img.onload = () => {
       const pad = 24;
       const dpi = 2;
@@ -90,8 +91,7 @@ export default function Page() {
 
       ctx.fillStyle = "#fff";
       ctx.font = "16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-      // RTL diller
-      // @ts-ignore
+      // @ts-ignore – RTL
       ctx.direction = language === "العربية" ? "rtl" : "ltr";
 
       let x = pad;
@@ -109,13 +109,15 @@ export default function Page() {
         URL.revokeObjectURL(imgURL);
       }, "image/png");
     };
+
     img.src = imgURL;
   }
+  // ---------- PNG ÜRETİMİ SON ----------
 
   return (
     <div className="container">
       <div className="header">
-        <Image src="/oratio.png" alt="oratio" width={240} height={72} className="logo" priority />
+        <NextImage src="/oratio.png" alt="oratio" width={240} height={72} className="logo" priority />
         <div className="subtitle">MEDICAL TRANSLATOR</div>
       </div>
 
@@ -161,3 +163,4 @@ export default function Page() {
     </div>
   );
 }
+
