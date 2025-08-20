@@ -1,3 +1,6 @@
 {
-  "buildCommand": "echo 'skip build' && exit 0"
+  "framework": "other",
+  "buildCommand": "echo 'skip'",
+  "outputDirectory": "public"
 }
+
