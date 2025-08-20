@@ -66,7 +66,7 @@ export default function Page() {
       const img = await loadImage(imgURL);
 
       // 3) Canvas kur
-      const SCALE = 2; // çıktıyı keskinleştir
+      const SCALE = 3; // daha keskin çıktı
       const cw = img.width * SCALE;
       const ch = img.height * SCALE;
 
@@ -75,24 +75,34 @@ export default function Page() {
       canvas.width = cw;
       canvas.height = ch;
 
+      ctx.imageSmoothingEnabled = true;
+      // @ts-ignore
+      if (ctx.imageSmoothingQuality) (ctx as any).imageSmoothingQuality = "high";
+
       // Arkaplanı çiz
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0, cw, ch);
 
       // 4) Kutuları maskele + çevirileri yaz
-      const rtl = LANG_CODE[lang] === "ar"; // şimdilik sadece Arapça RTL
+      const rtl = LANG_CODE[lang] === "ar";
       for (const it of items) {
-        const x = Math.max(0, Math.round(it.x * SCALE));
-        const y = Math.max(0, Math.round(it.y * SCALE));
-        const w = Math.max(1, Math.round(it.w * SCALE));
-        const h = Math.max(1, Math.round(it.h * SCALE));
+        const bx = Math.max(0, Math.round(it.x * SCALE));
+        const by = Math.max(0, Math.round(it.y * SCALE));
+        const bw = Math.max(1, Math.round(it.w * SCALE));
+        const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        // orijinal yazıyı sil (beyaz maske)
-        ctx.fillStyle = "rgba(255,255,255,0.96)";
-        ctx.fillRect(x, y, w, h);
+        // kenarlara pay vererek opak maske
+        const margin = Math.max(4, Math.round(Math.min(bw, bh) * 0.12));
+        const rx = clamp(bx - margin, 0, cw);
+        const ry = clamp(by - margin, 0, ch);
+        const rw = clamp(bw + margin * 2, 1, cw - rx);
+        const rh = clamp(bh + margin * 2, 1, ch - ry);
 
-        // çeviriyi kutuya sığdır
-        drawTextInBox(ctx, it.translated || it.text, x, y, w, h, rtl);
+        ctx.fillStyle = "#ffffff"; // TAM opak
+        ctx.fillRect(rx, ry, rw, rh);
+
+        const clean = decodeHTMLEntities(it.translated || it.text);
+        drawTextInBox(ctx, clean, bx, by, bw, bh, rtl);
       }
 
       // 5) PNG indir linki
@@ -242,8 +252,23 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
+// Basit HTML entity çözümü (sunucu tarafında format:"text" ile zaten kapattık; bu yedek)
+function decodeHTMLEntities(s: string) {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 /**
  * Kutuya sığacak şekilde fontu küçültür, metni satırlara böler ve çizer.
+ * Ölçüm ve çizim 600 (semi-bold) ile yapılıyor.
  */
 function drawTextInBox(
   ctx: CanvasRenderingContext2D,
@@ -255,15 +280,18 @@ function drawTextInBox(
   rtl: boolean
 ) {
   const pad = Math.max(6, Math.floor(Math.min(w, h) * 0.08));
-  const lineGap = 1.25; // satır yüksekliği oranı
-  const family = `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
+  const lineGap = 1.25;
+  const family =
+    `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
+
+  const setFont = (size: number) => (ctx.font = `600 ${size}px ${family}`);
 
   // 1) Font boyutunu kutuya sığdırana kadar küçült
   let fontSize = Math.max(10, Math.floor(h * 0.7));
   let lines: string[] = [];
 
   while (fontSize >= 10) {
-    ctx.font = `${fontSize}px ${family}`;
+    setFont(fontSize);
     lines = wrapLines(ctx, text, w - pad * 2);
 
     const needH = lines.length * fontSize * lineGap;
@@ -274,18 +302,18 @@ function drawTextInBox(
   }
 
   // 2) Çizim
-  ctx.fillStyle = "#111"; // koyu yazı
+  ctx.fillStyle = "#000";
   ctx.textBaseline = "top";
   ctx.textAlign = rtl ? "right" : "left";
+  setFont(fontSize);
 
-  // RTL için başlangıç x’i sağa yasla
   const startX = rtl ? x + w - pad : x + pad;
   let cy = y + pad;
 
   for (const ln of lines) {
     ctx.fillText(ln, startX, cy);
     cy += fontSize * lineGap;
-    if (cy > y + h - pad) break; // güvenlik
+    if (cy > y + h - pad) break;
   }
 }
 
@@ -300,7 +328,6 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
       line = test;
     } else {
       if (line) out.push(line);
-      // çok uzun tek bir kelime varsa parçala
       if (ctx.measureText(w).width > maxWidth) {
         out.push(...breakLongWord(ctx, w, maxWidth));
         line = "";
@@ -328,6 +355,7 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   if (buf) out.push(buf);
   return out;
 }
+
 
 
 
