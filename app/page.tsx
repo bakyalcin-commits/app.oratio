@@ -164,8 +164,8 @@ export default function Page() {
         <NextImage
           src="/oratio.png"
           alt="oratio"
-          width={148}
-          height={40}
+          width={296}
+          height={80}
           priority
           style={{ height: 40, width: "auto" }}
         />
