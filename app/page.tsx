@@ -1,8 +1,6 @@
-// app/page.tsx
 "use client";
 
-import Image from "next/image";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 type UiLang =
   | "English"
@@ -15,192 +13,349 @@ type UiLang =
   | "Français"
   | "Italiano";
 
-const LANGS: UiLang[] = [
-  "English",
-  "Türkçe",
-  "Русский",
-  "العربية",
-  "Српски",
-  "Deutsch",
-  "Español",
-  "Français",
-  "Italiano",
-];
+const LANG_CODE: Record<UiLang, string> = {
+  English: "en",
+  "Türkçe": "tr",
+  Русский: "ru",
+  العربية: "ar",
+  Српски: "sr",
+  Deutsch: "de",
+  Español: "es",
+  Français: "fr",
+  Italiano: "it",
+};
 
-const RTL_LANGS = new Set<UiLang>(["العربية"]);
+type Item = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  text: string;
+  translated: string;
+};
 
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
-  const [targetLang, setTargetLang] = useState<UiLang>("English");
-  const [loading, setLoading] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [lang, setLang] = useState<UiLang>("English");
+  const [busy, setBusy] = useState(false);
+  const [downloadURL, setDownloadURL] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // ---- File helpers ----
-  const openPicker = () => inputRef.current?.click();
-
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f && /^image\/(png|jpe?g)$/.test(f.type)) setFile(f);
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFile(e.target.files?.[0] ?? null);
+    setDownloadURL(null);
   };
 
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (f && /^image\/(png|jpe?g)$/.test(f.type)) setFile(f);
-  };
-  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
-
-  // ---- Main action: call API -> paint PNG -> download ----
-  const getTranslatedPNG = useCallback(async () => {
+  async function onTranslatePNG() {
     if (!file) return;
-    setLoading(true);
+    setBusy(true);
+    setDownloadURL(null);
+
     try {
-      // 1) OCR + Translate
-      const form = new FormData();
-      form.append("file", file);
-      form.append("targetLang", targetLang);
-
-      const res = await fetch("/api/translate", { method: "POST", body: form });
+      // 1) OCR + TRANSLATE
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("targetLang", lang);
+      const res = await fetch("/api/translate", { method: "POST", body: fd });
       if (!res.ok) throw new Error(await res.text());
-      const { items } = await res.json(); // { x,y,w,h,text,translated }[]
+      const data: { items: Item[] } = await res.json();
+      const items = data.items ?? [];
 
-      // 2) Draw on canvas
+      // 2) Kaynak görseli yükle
       const imgURL = URL.createObjectURL(file);
-      const img = new Image();
-      img.src = imgURL;
+      const img = await loadImage(imgURL);
 
-      await new Promise((ok, err) => {
-        img.onload = () => ok(null);
-        img.onerror = err;
-      });
+      // 3) Canvas kur
+      const SCALE = 3; // daha keskin çıktı
+      const cw = img.width * SCALE;
+      const ch = img.height * SCALE;
 
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-
+      const canvas = canvasRef.current!;
       const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0);
+      canvas.width = cw;
+      canvas.height = ch;
 
-      const isRTL = RTL_LANGS.has(targetLang);
+      ctx.imageSmoothingEnabled = true;
+      // @ts-ignore
+      if (ctx.imageSmoothingQuality) (ctx as any).imageSmoothingQuality = "high";
 
-      for (const l of items as Array<{ x: number; y: number; w: number; h: number; translated: string }>) {
-        // Kapama (arka yazıyı sil)
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(l.x, l.y, l.w, l.h);
+      // Arkaplanı çiz
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.drawImage(img, 0, 0, cw, ch);
 
-        // Yazı
-        const fontPx = Math.max(12, Math.floor(l.h * 0.7));
-        ctx.fillStyle = "#000000";
-        ctx.font = `600 ${fontPx}px Arial, Helvetica, sans-serif`;
-        ctx.textBaseline = "middle";
-        ctx.direction = isRTL ? ("rtl" as CanvasDirection) : ("ltr" as CanvasDirection);
-        ctx.textAlign = isRTL ? "right" : "left";
+      // 4) Kutuları maskele + çevirileri yaz
+      const rtl = LANG_CODE[lang] === "ar";
+      for (const it of items) {
+        const bx = Math.max(0, Math.round(it.x * SCALE));
+        const by = Math.max(0, Math.round(it.y * SCALE));
+        const bw = Math.max(1, Math.round(it.w * SCALE));
+        const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        const tx = isRTL ? l.x + l.w - 4 : l.x + 4;
-        const ty = l.y + l.h / 2;
+        // kenarlara pay vererek opak maske
+        const margin = Math.max(4, Math.round(Math.min(bw, bh) * 0.12));
+        const rx = clamp(bx - margin, 0, cw);
+        const ry = clamp(by - margin, 0, ch);
+        const rw = clamp(bw + margin * 2, 1, cw - rx);
+        const rh = clamp(bh + margin * 2, 1, ch - ry);
 
-        // Basit tek satır yerleşimi (uzunluk taşıyorsa doğal kırpma)
-        ctx.fillText(l.translated ?? "", tx, ty, l.w - 8);
+        ctx.fillStyle = "#ffffff"; // TAM opak
+        ctx.fillRect(rx, ry, rw, rh);
+
+        const clean = decodeHTMLEntities(it.translated || it.text);
+        drawTextInBox(ctx, clean, bx, by, bw, bh, rtl);
       }
 
-      // 3) Download
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "translated.png";
-        a.click();
-        URL.revokeObjectURL(url);
-      }, "image/png");
-    } catch (e) {
-      alert(String(e));
+      // 5) PNG indir linki
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b as Blob), "image/png")
+      );
+      const url = URL.createObjectURL(blob);
+      setDownloadURL(url);
+
+      URL.revokeObjectURL(imgURL);
+    } catch (e: any) {
+      alert(e?.message || String(e));
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }, [file, targetLang]);
+  }
 
   return (
-    <main className="min-h-dvh bg-black text-white">
-      <div className="mx-auto max-w-5xl px-6 py-8">
-        {/* Logo */}
-        <div className="mb-6">
-          <Image
-            src="/oratio.png"
-            alt="oratio"
-            width={148}
-            height={40}
-            priority
-            className="h-10 w-auto"
-          />
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#0b0b0d",
+        color: "#eaeaea",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 24,
+        padding: "48px 16px 64px",
+      }}
+    >
+      {/* Logo & Başlık */}
+      <div style={{ width: "100%", maxWidth: 880 }}>
+        <div style={{ fontSize: 56, fontWeight: 800, letterSpacing: 1 }}>oratio</div>
+        <div style={{ marginTop: 8, fontSize: 28, opacity: 0.9 }}>
+          MEDICAL TRANSLATOR
         </div>
+      </div>
 
-        <h1 className="text-4xl md:text-5xl font-semibold tracking-tight">MEDICAL TRANSLATOR</h1>
-
-        {/* Upload card (dropzone) */}
-        <section className="mt-8">
-          <div
-            role="button"
-            aria-label="Click to upload or drag & drop"
-            tabIndex={0}
-            onClick={openPicker}
-            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && openPicker()}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            className="group flex h-72 w-full cursor-pointer items-center justify-center rounded-2xl border-2 border-dashed border-white/20 bg-white/[0.03] ring-1 ring-white/5 transition
-                       hover:bg-white/[0.06] hover:ring-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+      {/* Upload alanı */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 880,
+          borderRadius: 16,
+          background: "#17171b",
+          border: "1px solid #2a2a31",
+          padding: 28,
+        }}
+      >
+        <div
+          style={{
+            border: "1px dashed #444",
+            borderRadius: 12,
+            height: 160,
+            display: "grid",
+            placeItems: "center",
+            marginBottom: 20,
+          }}
+        >
+          <label
+            htmlFor="file"
+            style={{
+              fontSize: 22,
+              cursor: "pointer",
+              opacity: 0.95,
+            }}
           >
-            <div className="text-center">
-              <p className="text-2xl md:text-3xl font-medium text-white">
-                {file ? file.name : "Upload medical document"}
-              </p>
-              <p className="mt-2 text-sm text-white/60">
-                Click to upload or drag &amp; drop
-              </p>
-              <p className="mt-1 text-xs text-white/40">Allowed formats: PNG, JPG</p>
-            </div>
-            {/* hidden input */}
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/png,image/jpeg"
-              className="hidden"
-              onChange={onPick}
-            />
-          </div>
+            Upload medical document
+          </label>
+          <input id="file" type="file" accept="image/png,image/jpeg" hidden onChange={onFile} />
+        </div>
+        <div style={{ opacity: 0.7, marginBottom: 20 }}>Allowed formats: PNG, JPG</div>
 
-          {/* Controls */}
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <label className="text-sm text-white/70">Language</label>
-            <select
-              value={targetLang}
-              onChange={(e) => setTargetLang(e.target.value as UiLang)}
-              className="w-full sm:w-56 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-white outline-none
-                         focus:ring-2 focus:ring-indigo-400"
-            >
-              {LANGS.map((l) => (
-                <option key={l} value={l} className="bg-black">
-                  {l}
-                </option>
-              ))}
-            </select>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <select
+            value={lang}
+            onChange={(e) => setLang(e.target.value as UiLang)}
+            style={{
+              background: "#101013",
+              color: "#eaeaea",
+              border: "1px solid #2a2a31",
+              borderRadius: 8,
+              padding: "10px 12px",
+              minWidth: 160,
+              outline: "none",
+            }}
+          >
+            {Object.keys(LANG_CODE).map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
 
-            <button
-              disabled={!file || loading}
-              onClick={getTranslatedPNG}
-              className="inline-flex w-full sm:w-auto items-center justify-center rounded-lg bg-white px-4 py-2 font-medium text-black
-                         disabled:cursor-not-allowed disabled:opacity-40 hover:bg-white/90 transition"
+          <button
+            onClick={onTranslatePNG}
+            disabled={!file || busy}
+            style={{
+              background: file && !busy ? "#fff" : "#2c2c32",
+              color: file && !busy ? "#111" : "#888",
+              fontWeight: 700,
+              borderRadius: 10,
+              padding: "10px 16px",
+              border: "none",
+              cursor: file && !busy ? "pointer" : "not-allowed",
+            }}
+          >
+            {busy ? "Working..." : "Get translated PNG"}
+          </button>
+
+          {downloadURL && (
+            <a
+              href={downloadURL}
+              download="translated.png"
+              style={{ marginLeft: 8, textDecoration: "underline" }}
             >
-              {loading ? "Processing…" : "Get translated PNG"}
-            </button>
-          </div>
-        </section>
+              Download PNG
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* Önizleme Canvas */}
+      <div style={{ width: "100%", maxWidth: 880 }}>
+        <canvas
+          ref={canvasRef}
+          style={{
+            width: "100%",
+            borderRadius: 12,
+            background: "#111",
+            border: "1px solid #2a2a31",
+          }}
+        />
       </div>
     </main>
   );
 }
+
+/* ————— yardımcılar ————— */
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
+// Basit HTML entity çözümü (sunucu tarafında format:"text" ile zaten kapattık; bu yedek)
+function decodeHTMLEntities(s: string) {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+/**
+ * Kutuya sığacak şekilde fontu küçültür, metni satırlara böler ve çizer.
+ * Ölçüm ve çizim 600 (semi-bold) ile yapılıyor.
+ */
+function drawTextInBox(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rtl: boolean
+) {
+  const pad = Math.max(6, Math.floor(Math.min(w, h) * 0.08));
+  const lineGap = 1.25;
+  const family =
+    `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
+
+  const setFont = (size: number) => (ctx.font = `600 ${size}px ${family}`);
+
+  // 1) Font boyutunu kutuya sığdırana kadar küçült
+  let fontSize = Math.max(10, Math.floor(h * 0.7));
+  let lines: string[] = [];
+
+  while (fontSize >= 10) {
+    setFont(fontSize);
+    lines = wrapLines(ctx, text, w - pad * 2);
+
+    const needH = lines.length * fontSize * lineGap;
+    const widest = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
+    if (needH <= h - pad * 2 && widest <= w - pad * 2) break;
+
+    fontSize -= 1;
+  }
+
+  // 2) Çizim
+  ctx.fillStyle = "#000";
+  ctx.textBaseline = "top";
+  ctx.textAlign = rtl ? "right" : "left";
+  setFont(fontSize);
+
+  const startX = rtl ? x + w - pad : x + pad;
+  let cy = y + pad;
+
+  for (const ln of lines) {
+    ctx.fillText(ln, startX, cy);
+    cy += fontSize * lineGap;
+    if (cy > y + h - pad) break;
+  }
+}
+
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let line = "";
+
+  for (const w of words) {
+    const test = line ? line + " " + w : w;
+    if (ctx.measureText(test).width <= maxWidth) {
+      line = test;
+    } else {
+      if (line) out.push(line);
+      if (ctx.measureText(w).width > maxWidth) {
+        out.push(...breakLongWord(ctx, w, maxWidth));
+        line = "";
+      } else {
+        line = w;
+      }
+    }
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: number): string[] {
+  let buf = "";
+  const out: string[] = [];
+  for (const ch of word) {
+    const t = buf + ch;
+    if (ctx.measureText(t).width <= maxWidth) {
+      buf = t;
+    } else {
+      if (buf) out.push(buf);
+      buf = ch;
+    }
+  }
+  if (buf) out.push(buf);
+  return out;
+}
+
 
 
 
