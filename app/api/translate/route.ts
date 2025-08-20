@@ -22,7 +22,6 @@ export async function POST(req: NextRequest) {
   const target = LANG_MAP[(form.get("targetLang") as string) || "English"] || "en";
   if (!file) return new Response("missing file", { status: 400 });
 
-  // Basit ve sorunsuz: PNG/JPG destekliyoruz.
   if (!/image\/(png|jpeg)/.test(file.type)) {
     return new Response("Only PNG/JPG supported in this build", { status: 415 });
   }
@@ -30,7 +29,6 @@ export async function POST(req: NextRequest) {
   const buf = Buffer.from(await file.arrayBuffer());
   const base64 = buf.toString("base64");
 
-  // OCR
   const vres = await fetch(`${VISION_URL}?key=${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -47,7 +45,6 @@ export async function POST(req: NextRequest) {
     return new Response("", { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 
-  // Translate
   const tres = await fetch(`${TRANSLATE_URL}?key=${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,3 +59,4 @@ export async function POST(req: NextRequest) {
     headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
   });
 }
+
