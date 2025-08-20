@@ -4,17 +4,15 @@ body { margin:0; background:#0b0b0b; color:#e5e5e5; font-family: ui-sans-serif, 
 .container { max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; }
 .header { text-align:center; margin-top: 28px; }
 .logo { height:64px; width:auto; }
-.subtitle { margin-top: 8px; font-weight:700; letter-spacing: .08em; color:#fff; }
-.card { margin: 28px auto 0; width: 720px; max-width: 100%; min-height: 160px; border-radius:16px; background:#1a1a1a; border:1px solid rgba(255,255,255,.08); display:grid; place-items:center; padding:28px; }
+.subtitle { margin-top: 8px; font-weight:700; letter-spacing:.08em; color:#fff; }
+.card { margin:28px auto 0; width:720px; max-width:100%; min-height:160px; border-radius:16px; background:#1a1a1a; border:1px solid rgba(255,255,255,.08); display:grid; place-items:center; padding:28px; }
 .card:hover { background:#1d1d1d; }
-.card .hint { margin-top: 8px; color:#cfcfcf; font-weight:600; }
-.card .formats { margin-top: 6px; font-size: 12px; color:#9b9b9b; }
-.row { margin: 18px auto 0; width:720px; max-width:100%; }
-.select { width: 100%; background:#111; color:#eaeaea; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:12px 14px; font-size:15px; }
-.button { margin-top: 18px; width: 720px; max-width:100%; padding: 12px 16px; border-radius:12px; background:#fff; color:#000; font-weight:700; border:none; cursor:pointer; }
+.card .hint { margin-top:8px; color:#cfcfcf; font-weight:600; }
+.card .formats { margin-top:6px; font-size:12px; color:#9b9b9b; }
+.row { margin:18px auto 0; width:720px; max-width:100%; }
+.select { width:100%; background:#111; color:#eaeaea; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:12px 14px; font-size:15px; }
+.button { margin-top:18px; width:720px; max-width:100%; padding:12px 16px; border-radius:12px; background:#fff; color:#000; font-weight:700; border:none; cursor:pointer; }
 .button[disabled] { background:#2b2b2b; color:#888; cursor:not-allowed; }
-.preview { margin-top: 28px; display:grid; gap:16px; }
-.preview img { width:100%; height:auto; border-radius:12px; border:1px solid rgba(255,255,255,.08); background:#000; object-fit:contain; }
 .center { text-align:center; font-size:12px; color:#8a8a8a; margin-top:10px; }
 .folder { width:52px; height:40px; background:#7f7f7f; border-radius:6px 6px 4px 4px; position:relative; opacity:.9; }
 .folder::before { content:''; position:absolute; left:8px; top:-8px; width:24px; height:10px; background:#7f7f7f; border-radius:4px 4px 0 0; }
