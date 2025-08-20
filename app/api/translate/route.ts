@@ -3,61 +3,121 @@ import type { NextRequest } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VISION_URL = "https://vision.googleapis.com/v1/images:annotate";
-const TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
+const API_KEY = process.env.PROVIDER_API_KEY as string;
+const VISION_URL = `https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`;
+const TRANSLATE_URL = `https://translation.googleapis.com/language/translate/v2?key=${API_KEY}`;
 
-const LANG_MAP: Record<string, string> = {
-  English: "en", Türkçe: "tr", Русский: "ru", العربية: "ar", Српски: "sr",
-  Deutsch: "de", Español: "es", Français: "fr", Italiano: "it"
-};
+const LANG = {
+  English: "en",
+  "Türkçe": "tr",
+  Русский: "ru",
+  العربية: "ar",
+  Српски: "sr",
+  Deutsch: "de",
+  Español: "es",
+  Français: "fr",
+  Italiano: "it",
+} as const;
+type UiLang = keyof typeof LANG;
 
-export async function GET() { return new Response("ok", { status: 200 }); }
+function textFromWord(word: any): { text: string; breakType: string | null } {
+  const syms = word?.symbols ?? [];
+  const text = syms.map((s: any) => s.text ?? "").join("");
+  const last = syms[syms.length - 1];
+  const br = last?.property?.detectedBreak?.type ?? null;
+  return { text, breakType: br };
+}
 
 export async function POST(req: NextRequest) {
-  const key = process.env.PROVIDER_API_KEY;
-  if (!key) return new Response("missing PROVIDER_API_KEY", { status: 500 });
+  try {
+    const form = await req.formData();
+    const file = form.get("file") as File | null;
+    const targetUi = (form.get("targetLang") as UiLang) || "English";
+    const target = LANG[targetUi] ?? "en";
+    if (!file) return new Response("file missing", { status: 400 });
 
-  const form = await req.formData();
-  const file = form.get("file") as File | null;
-  const target = LANG_MAP[(form.get("targetLang") as string) || "English"] || "en";
-  if (!file) return new Response("missing file", { status: 400 });
+    // 1) OCR
+    const bytes = Buffer.from(await file.arrayBuffer()).toString("base64");
+    const vres = await fetch(VISION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requests: [
+          {
+            image: { content: bytes },
+            features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+          },
+        ],
+      }),
+    });
+    if (!vres.ok) return new Response(await vres.text(), { status: 500 });
+    const vjson = await vres.json();
+    const page = vjson?.responses?.[0]?.fullTextAnnotation?.pages?.[0];
+    if (!page) return Response.json({ items: [] });
 
-  if (!/image\/(png|jpeg)/.test(file.type)) {
-    return new Response("Only PNG/JPG supported in this build", { status: 415 });
+    // 2) KELİME → SATIR gruplama (line-level bbox)
+    const lines: Array<{ x: number; y: number; w: number; h: number; text: string }> = [];
+
+    for (const block of page.blocks ?? []) {
+      for (const para of block.paragraphs ?? []) {
+        let accText = "";
+        let accXs: number[] = [];
+        let accYs: number[] = [];
+
+        const flush = () => {
+          const t = accText.trim();
+          if (t.length > 0 && /[A-Za-z0-9ĞÜŞİİğıöçÇÖŞÜ]/.test(t)) {
+            const x = Math.min(...accXs);
+            const y = Math.min(...accYs);
+            const w = Math.max(...accXs) - x;
+            const h = Math.max(...accYs) - y;
+            // çok ince/boş kutuları at
+            if (w > 5 && h > 5) lines.push({ x, y, w, h, text: t });
+          }
+          accText = "";
+          accXs = [];
+          accYs = [];
+        };
+
+        for (const w of para.words ?? []) {
+          const { text, breakType } = textFromWord(w);
+          if (!text) continue;
+          accText += (accText ? " " : "") + text;
+
+          const v = w.boundingBox?.vertices ?? [];
+          const xs = v.map((p: any) => p.x ?? 0);
+          const ys = v.map((p: any) => p.y ?? 0);
+          accXs.push(Math.min(...xs), Math.max(...xs));
+          accYs.push(Math.min(...ys), Math.max(...ys));
+
+          // Vision LINE_BREAK & EOL_SURE_SPACE → satır sonu
+          if (breakType === "LINE_BREAK") flush();
+        }
+        // paragraf sonu
+        flush();
+      }
+    }
+
+    if (!lines.length) return Response.json({ items: [] });
+
+    // 3) Çeviri (toplu)
+    const tres = await fetch(TRANSLATE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: lines.map((l) => l.text), target }),
+    });
+    if (!tres.ok) return new Response(await tres.text(), { status: 500 });
+    const tjson = await tres.json();
+    const translated = tjson?.data?.translations?.map((t: any) => t.translatedText) ?? [];
+
+    const out = lines.map((l, i) => ({
+      ...l,
+      translated: translated[i] ?? l.text,
+    }));
+
+    return Response.json({ items: out });
+  } catch (e: any) {
+    return new Response(String(e?.message || e), { status: 500 });
   }
-
-  const buf = Buffer.from(await file.arrayBuffer());
-  const base64 = buf.toString("base64");
-
-  // OCR
-  const vres = await fetch(`${VISION_URL}?key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      requests: [{ image: { content: base64 }, features: [{ type: "DOCUMENT_TEXT_DETECTION" }] }]
-    })
-  });
-  if (!vres.ok) return new Response("vision error: " + (await vres.text()), { status: 502 });
-  const vjson = await vres.json();
-  const fullText: string =
-    vjson?.responses?.[0]?.fullTextAnnotation?.text ||
-    vjson?.responses?.[0]?.textAnnotations?.[0]?.description || "";
-  if (!fullText.trim()) {
-    return new Response("", { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  }
-
-  // Translate
-  const tres = await fetch(`${TRANSLATE_URL}?key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q: [fullText], target, format: "text" })
-  });
-  if (!tres.ok) return new Response("translate error: " + (await tres.text()), { status: 502 });
-  const tjson = await tres.json();
-  const translated: string = tjson?.data?.translations?.[0]?.translatedText || "";
-
-  return new Response(translated, {
-    status: 200,
-    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
-  });
 }
+
