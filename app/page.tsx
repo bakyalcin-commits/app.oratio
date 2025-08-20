@@ -164,10 +164,10 @@ export default function Page() {
         <NextImage
           src="/oratio.png"
           alt="oratio"
-          width={296}
-          height={80}
+          width={592}
+          height={160}
           priority
-          style={{ height: 40, width: "auto" }}
+          style={{ height: 160, width: "auto" }}
         />
         <div style={{ marginTop: 8, fontSize: 28, opacity: 0.9 }}>
           MEDICAL TRANSLATOR
