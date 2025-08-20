@@ -7,18 +7,12 @@ const LANGS = [
   "English","Türkçe","Русский","العربية","Српски","Deutsch","Español","Français","Italiano"
 ] as const;
 
-type LayoutMode = "bottom" | "side" | "text";
-
 export default function Page() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [lang, setLang] = useState<(typeof LANGS)[number]>("English");
   const [busy, setBusy] = useState(false);
   const [txt, setTxt] = useState<string>("");
-
-  // yeni: export tercihleri
-  const [layout, setLayout] = useState<LayoutMode>("bottom");
-  const [fontSize, setFontSize] = useState<number>(16);
 
   const pick = (f?: File) => { if (!f) return; setFile(f); setTxt(""); };
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); };
@@ -47,7 +41,8 @@ export default function Page() {
     URL.revokeObjectURL(url);
   };
 
-  // ---------- PNG ÜRETİMİ ----------
+  /* ---------------- PNG OVERLAY ---------------- */
+
   function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
     const words = text.split(/\s+/);
     const lines: string[] = [];
@@ -65,97 +60,71 @@ export default function Page() {
     return lines;
   }
 
-  function downloadPNG(
-    sourceFile: File,
-    text: string,
-    language: string,
-    mode: LayoutMode,
-    fs: number
-  ) {
+  function downloadPNG(sourceFile: File, text: string, language: string) {
     const imgURL = URL.createObjectURL(sourceFile);
-    const img = new window.Image();
+    const img = new window.Image(); // kritik: Next <Image> değil, tarayıcı constructor
 
     img.onload = () => {
-      const pad = 36;           // dış kenar boşluğu
-      const gutter = 28;        // görsel-metni ayıran boşluk
-      const dpi = 2;            // daha keskin PNG
-      const font = `${fs}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+      // temel ayarlar
+      const dpi = 2;              // daha keskin çıktı
+      const pad = 24;             // panel iç boşluk
+      const baseFont = 16;        // px
+      const lineH = Math.ceil(baseFont * 1.25);
+      const font = `${baseFont}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
 
       // ölçüm context'i
       const measure = document.createElement("canvas").getContext("2d")!;
       measure.font = font;
 
-      // metin genişliği hedefi
-      const bottomTextWidth = Math.min(1100, img.width);
-      const sideTextWidth   = Math.max(380, Math.min(900, Math.floor(img.width * 0.6)));
+      const usableWidth = img.width - pad * 2;
+      const allLines = wrapText(measure, text, usableWidth);
 
-      const textWidth = mode === "side" ? sideTextWidth
-                        : mode === "text" ? Math.min(1200, 1000)
-                        : bottomTextWidth;
+      // panel yüksekliği: metne göre 24% ile 50% arasında
+      const needed = allLines.length * lineH + pad * 2;
+      const minH = Math.round(img.height * 0.24);
+      const maxH = Math.round(img.height * 0.50);
+      const panelH = Math.max(minH, Math.min(maxH, needed));
 
-      const lines = wrapText(measure, text, textWidth);
-      const lineHeight = Math.ceil(fs * 1.25);
-      const textHeight = Math.max(lineHeight, lines.length * lineHeight);
-
-      // tuval boyutları
-      let width: number, height: number;
-      if (mode === "side") {
-        width  = img.width + gutter + textWidth + pad * 2;
-        height = Math.max(img.height, textHeight) + pad * 2;
-      } else if (mode === "text") {
-        width  = textWidth + pad * 2;
-        height = textHeight + pad * 2;
-      } else { // bottom
-        width  = Math.max(img.width, textWidth) + pad * 2;
-        height = img.height + gutter + textHeight + pad * 2;
+      // eğer sığmıyorsa kes ve son satıra … ekle
+      const maxLines = Math.floor((panelH - pad * 2) / lineH);
+      const lines = allLines.slice(0, Math.max(0, maxLines));
+      if (allLines.length > maxLines && lines.length > 0) {
+        const last = lines[lines.length - 1];
+        // son satıra ellipsis sığdır
+        let ell = last + " …";
+        while (measure.measureText(ell).width > usableWidth && ell.length > 1) {
+          ell = ell.slice(0, -2) + "…";
+        }
+        lines[lines.length - 1] = ell;
       }
 
+      // tuval: orijinal resim boyunda
       const canvas = document.createElement("canvas");
-      canvas.width = width * dpi;
-      canvas.height = height * dpi;
+      canvas.width = img.width * dpi;
+      canvas.height = img.height * dpi;
       const ctx = canvas.getContext("2d")!;
       ctx.scale(dpi, dpi);
 
-      // beyaz arka plan, siyah metin (print friendly)
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = "#000";
+      // arka plan: tamamen orijinal görüntü
+      ctx.drawImage(img, 0, 0);
+
+      // alt panel (okunabilirlik için opak beyaz)
+      const panelY = img.height - panelH;
+      ctx.fillStyle = "rgba(255,255,255,0.96)";
+      ctx.fillRect(0, panelY, img.width, panelH);
+
+      // metin
       ctx.font = font;
-      // @ts-ignore – RTL desteği
+      ctx.fillStyle = "#000";
+      // RTL dili düzelt
+      // @ts-ignore
       ctx.direction = language === "العربية" ? "rtl" : "ltr";
 
-      // çizimler
-      if (mode === "side") {
-        // görüntü sol, metin sağ
-        const ix = pad;
-        const iy = (height - img.height) / 2;
-        ctx.drawImage(img, ix, iy, img.width, img.height);
-
-        let x = ix + img.width + gutter;
-        let y = pad + lineHeight;
-        for (const line of lines) {
-          ctx.fillText(line, x, y);
-          y += lineHeight;
-        }
-      } else if (mode === "text") {
-        // sadece metin
-        let x = pad;
-        let y = pad + lineHeight;
-        for (const line of lines) {
-          ctx.fillText(line, x, y);
-          y += lineHeight;
-        }
-      } else {
-        // bottom: görüntü üstte, metin altta
-        const ix = (width - img.width) / 2;
-        ctx.drawImage(img, ix, pad, img.width, img.height);
-
-        let x = pad;
-        let y = pad + img.height + gutter + lineHeight;
-        for (const line of lines) {
-          ctx.fillText(line, x, y);
-          y += lineHeight;
-        }
+      let x = pad;
+      let y = panelY + pad + lineH;
+      for (const line of lines) {
+        ctx.fillText(line, x, y);
+        y += lineH;
       }
 
       canvas.toBlob((b) => {
@@ -169,7 +138,8 @@ export default function Page() {
 
     img.src = imgURL;
   }
-  // ---------- PNG ÜRETİMİ SON ----------
+
+  /* ---------------- PNG OVERLAY SON ---------------- */
 
   return (
     <div className="container">
@@ -207,31 +177,13 @@ export default function Page() {
 
         <div className="small">{file ? file.name : "No file selected"}</div>
 
-        {/* Export tercihi ve font boyutu */}
-        <div className="row" style={{gridTemplateColumns:"1fr 1fr"}}>
-          <select className="select" value={layout} onChange={(e)=>setLayout(e.target.value as LayoutMode)}>
-            <option value="bottom">Export layout: Image + Text (bottom)</option>
-            <option value="side">Export layout: Side by side</option>
-            <option value="text">Export layout: Text only</option>
-          </select>
-          <input
-            className="select"
-            type="number"
-            min={12}
-            max={28}
-            value={fontSize}
-            onChange={(e)=>setFontSize(parseInt(e.target.value || "16", 10))}
-            placeholder="Font size"
-          />
-        </div>
-
         {txt && (
           <>
             <pre className="out">{txt}</pre>
             <button className="button" onClick={downloadTXT}>Download TXT</button>
             <button
               className="button"
-              onClick={()=> downloadPNG(file!, txt, lang, layout, fontSize)}
+              onClick={()=> downloadPNG(file!, txt, lang)}
               style={{marginTop:10}}
             >
               Download PNG
@@ -242,5 +194,6 @@ export default function Page() {
     </div>
   );
 }
+
 
 
