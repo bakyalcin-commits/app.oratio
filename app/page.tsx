@@ -51,34 +51,46 @@ export default function Page() {
     }
     const data: { items: Item[] } = await res.json();
 
+    // kaynak görseli yükle
     const srcURL = URL.createObjectURL(file);
     const img = new window.Image();
     img.onload = async () => {
+      const W = img.width;
+      const H = img.height;
+
       const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
+      canvas.width = W;
+      canvas.height = H;
       const ctx = canvas.getContext("2d")!;
       ctx.imageSmoothingEnabled = true;
 
-      // 1) orijinal görseli boya
+      // 1) arka plan + orijinal
       ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, W, H);
       ctx.drawImage(img, 0, 0);
 
-      const arr = (data.items || []) as Item[];
-      if (!arr.length) {
+      // 2) çizgi bulma için binarize data
+      const imgData = ctx.getImageData(0, 0, W, H);
+      const reader = makeScanHelpers(imgData);
+
+      const items = (data.items || []) as Item[];
+      if (!items.length) {
         setBusy(false);
         return;
       }
 
-      // medyan satır yüksekliği
-      const medH = median(arr.map((i) => i.h)) || 18;
+      // medyan yükseklik
+      const medH = median(items.map((i) => i.h)) || 18;
 
-      // her öğe için sil + yaz
-      for (const it of arr) {
-        const r = calcRect(it, medH, canvas.width, canvas.height);
-        eraseBox(ctx, r); // eski metni temizle
-        drawFittedText(ctx, chosen, it.translated, r); // çeviriyi yerleştir
+      for (const it of items) {
+        // kaba kutu
+        const base = baseRect(it, medH, W, H);
+        // çizgilere snap
+        const snapped = snapToCell(reader, base, medH, W, H);
+        // önce sil
+        eraseBox(ctx, snapped);
+        // sonra yaz
+        drawFittedText(ctx, chosen, it.translated, snapped);
       }
 
       const blob = await new Promise<Blob>((resolve) =>
@@ -134,10 +146,7 @@ export default function Page() {
         <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
           <select
             value={lang}
-            onChange={(e) => {
-              const v = e.target.value;
-              setLang(v);
-            }}
+            onChange={(e) => setLang(e.target.value)}
             style={{ padding: "12px 14px", flex: "0 0 260px" }}
           >
             {LANGS.map((l) => (
@@ -194,7 +203,7 @@ export default function Page() {
   );
 }
 
-/* ───────── helpers ───────── */
+/* ---------------- helpers ---------------- */
 
 function median(a: number[]) {
   if (!a.length) return 0;
@@ -209,15 +218,11 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-/** Metin kutusunu, çizgilere zarar vermeden biraz genişletilmiş pad ile hesapla */
-function calcRect(it: { x: number; y: number; w: number; h: number }, medH: number, W: number, H: number): Rect {
-  // yatay biraz geniş, dikey biraz dar pad
-  const hPad = Math.max(3, Math.round(medH * 0.70));
+/** kaba kutu (hafif yatay geniş, dikey dar) */
+function baseRect(it: { x: number; y: number; w: number; h: number }, medH: number, W: number, H: number): Rect {
+  const hPad = Math.max(4, Math.round(medH * 0.8));
   const vPad = Math.max(2, Math.round(medH * 0.35));
-
-  // kutu, aşırı yüksekse (çizgi yakalamışsa) guard ile kısalt
-  const guardH = Math.min(it.h, Math.round(medH * 1.25));
-
+  const guardH = Math.min(it.h, Math.round(medH * 1.15));
   const cx = it.x + it.w / 2;
   const cy = it.y + it.h / 2;
 
@@ -229,38 +234,151 @@ function calcRect(it: { x: number; y: number; w: number; h: number }, medH: numb
   return { x, y, w, h };
 }
 
-/** Silme işlemi: iki beyaz dolgu + küçük “ışık” gölge ile tırtıkları alır. */
+/** Canvas üzerindeki piksel okumaları için yardımcılar */
+function makeScanHelpers(img: ImageData) {
+  const { data, width: W, height: H } = img;
+
+  // gri < TH => “koyu” kabul et
+  const DARK = 150;
+
+  function isDarkPixel(x: number, y: number) {
+    if (x < 0 || y < 0 || x >= W || y >= H) return false;
+    const i = (y * W + x) * 4;
+    const r = data[i],
+      g = data[i + 1],
+      b = data[i + 2];
+    const gray = (r * 299 + g * 587 + b * 114) / 1000;
+    return gray < DARK;
+  }
+
+  function rowDarkRatio(y: number, x1: number, x2: number) {
+    x1 = clamp(Math.floor(x1), 0, W - 1);
+    x2 = clamp(Math.ceil(x2), 0, W - 1);
+    let hits = 0,
+      total = Math.max(1, x2 - x1 + 1);
+    for (let x = x1; x <= x2; x++) if (isDarkPixel(x, y)) hits++;
+    return hits / total;
+  }
+
+  function colDarkRatio(x: number, y1: number, y2: number) {
+    y1 = clamp(Math.floor(y1), 0, H - 1);
+    y2 = clamp(Math.ceil(y2), 0, H - 1);
+    let hits = 0,
+      total = Math.max(1, y2 - y1 + 1);
+    for (let y = y1; y <= y2; y++) if (isDarkPixel(x, y)) hits++;
+    return hits / total;
+  }
+
+  return { rowDarkRatio, colDarkRatio, W, H };
+}
+
+/** kutuyu hücrenin üst/alt çizgisine oturt */
+function snapToCell(
+  scan: ReturnType<typeof makeScanHelpers>,
+  r: Rect,
+  medH: number,
+  W: number,
+  H: number
+): Rect {
+  const LINE_THR = 0.18; // bir satırda bu orandan fazla koyu piksel varsa “çizgi”
+  const MAX_SCAN = Math.round(medH * 2.2); // merkezden en fazla bu kadar uzağa bak
+  const x1 = clamp(r.x + 2, 0, W - 1);
+  const x2 = clamp(r.x + r.w - 2, 0, W - 1);
+  const cy = r.y + r.h / 2;
+
+  // yukarı doğru en yakın yatay çizgi
+  let top = r.y;
+  for (let dy = 0; dy < MAX_SCAN; dy++) {
+    const y = Math.round(cy - dy);
+    if (y < 0) break;
+    if (scan.rowDarkRatio(y, x1, x2) > LINE_THR) {
+      top = y + 2; // çizginin hemen altı
+      break;
+    }
+  }
+
+  // aşağı doğru en yakın yatay çizgi
+  let bottom = r.y + r.h;
+  for (let dy = 0; dy < MAX_SCAN; dy++) {
+    const y = Math.round(cy + dy);
+    if (y >= H) break;
+    if (scan.rowDarkRatio(y, x1, x2) > LINE_THR) {
+      bottom = y - 2; // çizginin hemen üstü
+      break;
+    }
+  }
+
+  // eğer alt-üst mantıklıysa kullan
+  if (bottom > top + 6) {
+    r.y = clamp(top, 0, H - 1);
+    r.h = clamp(bottom - top, 6, H - r.y);
+  }
+
+  // dikey çerçevelere dokunmamak için hafif içeri çek
+  const COL_THR = 0.20;
+  let left = r.x,
+    right = r.x + r.w;
+  const y1 = clamp(r.y + 2, 0, H - 1);
+  const y2 = clamp(r.y + r.h - 2, 0, H - 1);
+
+  for (let dx = 0; dx < Math.round(medH * 1.5); dx++) {
+    const xL = r.x + dx;
+    if (xL >= right) break;
+    if (scan.colDarkRatio(xL, y1, y2) > COL_THR) {
+      left = xL + 2;
+      break;
+    }
+  }
+  for (let dx = 0; dx < Math.round(medH * 1.5); dx++) {
+    const xR = r.x + r.w - dx;
+    if (xR <= left) break;
+    if (scan.colDarkRatio(xR, y1, y2) > COL_THR) {
+      right = xR - 2;
+      break;
+    }
+  }
+
+  if (right > left + 8) {
+    r.x = clamp(left, 0, W - 1);
+    r.w = clamp(right - left, 8, W - r.x);
+  }
+
+  // son bir güvenlik: çok alçak/yüksekse normalize et
+  const targetH = clamp(Math.round(medH * 0.95), 10, Math.round(medH * 1.35));
+  if (r.h > targetH * 1.6) {
+    const cy2 = r.y + r.h / 2;
+    r.h = targetH;
+    r.y = clamp(Math.round(cy2 - r.h / 2), 0, H - r.h);
+  }
+
+  return r;
+}
+
+/** silme: iki kat beyaz + hafif blur ile tırtıkları yutar */
 function eraseBox(ctx: CanvasRenderingContext2D, r: Rect) {
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
-
-  // 1. geçiş
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(r.x, r.y, r.w, r.h);
-
-  // 2. hafif genişleterek tekrar — aliasing lekelerini toplar
   ctx.shadowColor = "#ffffff";
-  ctx.shadowBlur = 0.6;
+  ctx.shadowBlur = 0.7;
   ctx.fillRect(r.x - 0.5, r.y - 0.5, r.w + 1, r.h + 1);
-
-  // 3. garanti beyaz
   ctx.shadowBlur = 0;
   ctx.fillRect(r.x, r.y, r.w, r.h);
-
   ctx.restore();
 }
 
-/** Yazıyı kutuya sığdırıp ortalar. */
+/** yazıyı kutuya sığdırıp ortalar (RTL destekli) */
 function drawFittedText(
   ctx: CanvasRenderingContext2D,
   lang: { code: string; rtl?: boolean },
   raw: string,
   r: Rect
 ) {
-  const text = decodeHtml(raw);
+  const text = decodeHtml(raw).replace(/\s+/g, " ").trim();
   const family = "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-  const maxW = Math.max(20, r.w - 8);
-  const targetH = Math.max(9, Math.floor(r.h * 0.80)); // kutunun %80'i
+  const maxW = Math.max(24, r.w - 8);
+  const targetH = Math.max(10, Math.floor(r.h * 0.78));
 
   ctx.textBaseline = "middle";
   ctx.direction = lang.rtl ? "rtl" : "ltr";
@@ -284,6 +402,7 @@ function decodeHtml(s: string) {
   el.innerHTML = s;
   return el.value;
 }
+
 
 
 
