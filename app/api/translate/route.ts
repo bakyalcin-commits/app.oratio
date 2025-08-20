@@ -1,5 +1,4 @@
 import type { NextRequest } from "next/server";
-import { preprocess } from "../../../lib/preprocess"; // <- relative import
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,15 +34,10 @@ export async function POST(req: NextRequest) {
     const file = form.get("file") as File | null;
     const targetUi = (form.get("targetLang") as UiLang) || "English";
     const target = LANG[targetUi] ?? "en";
-
     if (!file) return new Response("file missing", { status: 400 });
 
-    // 0) Görseli OCR öncesi temizle (deskew/normalize). Hata olursa orijinalle devam et.
-    const origBuf = Buffer.from(await file.arrayBuffer());
-    const workBuf = await preprocess(origBuf).catch(() => origBuf);
-
     // 1) OCR
-    const bytes = workBuf.toString("base64");
+    const bytes = Buffer.from(await file.arrayBuffer()).toString("base64");
     const vres = await fetch(VISION_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -57,7 +51,6 @@ export async function POST(req: NextRequest) {
       }),
     });
     if (!vres.ok) return new Response(await vres.text(), { status: 500 });
-
     const vjson = await vres.json();
     const page = vjson?.responses?.[0]?.fullTextAnnotation?.pages?.[0];
     if (!page) return Response.json({ items: [] });
@@ -88,7 +81,6 @@ export async function POST(req: NextRequest) {
         for (const w of para.words ?? []) {
           const { text, breakType } = textFromWord(w);
           if (!text) continue;
-
           accText += (accText ? " " : "") + text;
 
           const v = w.boundingBox?.vertices ?? [];
@@ -99,20 +91,23 @@ export async function POST(req: NextRequest) {
 
           if (breakType === "LINE_BREAK") flush();
         }
-        flush(); // paragraf sonu
+        flush();
       }
     }
 
     if (!lines.length) return Response.json({ items: [] });
 
-    // 3) Çeviri (toplu)
+    // 3) Çeviri (toplu) — HTML entity kaçışlarını kapat
     const tres = await fetch(TRANSLATE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q: lines.map((l) => l.text), target }),
+      body: JSON.stringify({
+        q: lines.map((l) => l.text),
+        target,
+        format: "text", // ← ÖNEMLİ: &quot; gibi kaçışları engeller
+      }),
     });
     if (!tres.ok) return new Response(await tres.text(), { status: 500 });
-
     const tjson = await tres.json();
     const translated =
       tjson?.data?.translations?.map((t: any) => t.translatedText) ?? [];
@@ -127,6 +122,7 @@ export async function POST(req: NextRequest) {
     return new Response(String(e?.message || e), { status: 500 });
   }
 }
+
 
 
 
