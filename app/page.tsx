@@ -19,17 +19,13 @@ const LANGS: { label: string; code: string; rtl?: boolean }[] = [
 
 export default function Page() {
   const [lang, setLang] = useState(LANGS[0].code);
-  const [rtl, setRtl] = useState(!!LANGS[0].rtl);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [pngURL, setPngURL] = useState<string | null>(null);
   const [previewName, setPreviewName] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const chosen = useMemo(
-    () => LANGS.find((l) => l.code === lang)!,
-    [lang]
-  );
+  const chosen = useMemo(() => LANGS.find((l) => l.code === lang)!, [lang]);
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] || null;
@@ -55,7 +51,6 @@ export default function Page() {
     }
     const data: { items: Item[] } = await res.json();
 
-    // draw to canvas with cleanup + overlay
     const srcURL = URL.createObjectURL(file);
     const img = new window.Image();
     img.onload = async () => {
@@ -65,34 +60,25 @@ export default function Page() {
       const ctx = canvas.getContext("2d")!;
       ctx.imageSmoothingEnabled = true;
 
-      // original image
+      // 1) orijinal görseli boya
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
 
       const arr = (data.items || []) as Item[];
+      if (!arr.length) {
+        setBusy(false);
+        return;
+      }
+
+      // medyan satır yüksekliği
       const medH = median(arr.map((i) => i.h)) || 18;
-      const vPad = Math.max(2, Math.round(medH * 0.40));
-      const hPad = Math.max(2, Math.round(medH * 0.60));
 
-      ctx.globalCompositeOperation = "source-over";
-      ctx.textBaseline = "middle";
-
+      // her öğe için sil + yaz
       for (const it of arr) {
-        const cx = it.x + it.w / 2;
-        const cy = it.y + it.h / 2;
-
-        const x = Math.max(0, Math.round(it.x - hPad));
-        const y = Math.max(0, Math.round(cy - medH / 2 - vPad));
-        const w = Math.min(canvas.width - x, Math.round(it.w + hPad * 2));
-        const h = Math.min(canvas.height - y, Math.round(medH + vPad * 2));
-
-        // two-pass white fill to fully clear aliasing specks
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(x, y, w, h);
-        ctx.fillRect(x, y, w, h);
-
-        const maxW = Math.max(20, w - 8);
-        ctx.textAlign = chosen.rtl ? "right" : "left";
-        writeFitted(ctx, decodeHtml(it.translated), chosen.rtl ? x + w - 4 : x + 4, y + h / 2, maxW, medH);
+        const r = calcRect(it, medH, canvas.width, canvas.height);
+        eraseBox(ctx, r); // eski metni temizle
+        drawFittedText(ctx, chosen, it.translated, r); // çeviriyi yerleştir
       }
 
       const blob = await new Promise<Blob>((resolve) =>
@@ -108,7 +94,6 @@ export default function Page() {
 
   return (
     <main style={{ maxWidth: 980, margin: "40px auto 80px", padding: "0 16px" }}>
-      {/* Logo */}
       <div style={{ textAlign: "center", marginBottom: 12, fontSize: 48, fontWeight: 800, letterSpacing: 1 }}>
         oratio
       </div>
@@ -116,7 +101,6 @@ export default function Page() {
         MEDICAL TRANSLATOR
       </div>
 
-      {/* Upload box */}
       <div className="card" style={{ padding: 22, marginBottom: 16 }}>
         <div
           onClick={() => inputRef.current?.click()}
@@ -147,14 +131,12 @@ export default function Page() {
           style={{ display: "none" }}
         />
 
-        {/* language */}
         <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
           <select
             value={lang}
             onChange={(e) => {
-              setLang(e.target.value);
-              const r = LANGS.find((l) => l.code === e.target.value)?.rtl;
-              setRtl(!!r);
+              const v = e.target.value;
+              setLang(v);
             }}
             style={{ padding: "12px 14px", flex: "0 0 260px" }}
           >
@@ -164,6 +146,7 @@ export default function Page() {
               </option>
             ))}
           </select>
+
           <button
             onClick={run}
             disabled={!file || busy}
@@ -178,7 +161,6 @@ export default function Page() {
         </div>
       </div>
 
-      {/* result preview + download */}
       {pngURL && (
         <div className="card" style={{ padding: 18 }}>
           <div style={{ display: "grid", placeItems: "center" }}>
@@ -212,7 +194,8 @@ export default function Page() {
   );
 }
 
-/* helpers */
+/* ───────── helpers ───────── */
+
 function median(a: number[]) {
   if (!a.length) return 0;
   const s = [...a].sort((x, y) => x - y);
@@ -220,30 +203,80 @@ function median(a: number[]) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-function writeFitted(
+type Rect = { x: number; y: number; w: number; h: number };
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+/** Metin kutusunu, çizgilere zarar vermeden biraz genişletilmiş pad ile hesapla */
+function calcRect(it: { x: number; y: number; w: number; h: number }, medH: number, W: number, H: number): Rect {
+  // yatay biraz geniş, dikey biraz dar pad
+  const hPad = Math.max(3, Math.round(medH * 0.70));
+  const vPad = Math.max(2, Math.round(medH * 0.35));
+
+  // kutu, aşırı yüksekse (çizgi yakalamışsa) guard ile kısalt
+  const guardH = Math.min(it.h, Math.round(medH * 1.25));
+
+  const cx = it.x + it.w / 2;
+  const cy = it.y + it.h / 2;
+
+  const x = clamp(Math.round(it.x - hPad), 0, W - 1);
+  const y = clamp(Math.round(cy - guardH / 2 - vPad), 0, H - 1);
+  const w = clamp(Math.round(it.w + hPad * 2), 1, W - x);
+  const h = clamp(Math.round(guardH + vPad * 2), 1, H - y);
+
+  return { x, y, w, h };
+}
+
+/** Silme işlemi: iki beyaz dolgu + küçük “ışık” gölge ile tırtıkları alır. */
+function eraseBox(ctx: CanvasRenderingContext2D, r: Rect) {
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+
+  // 1. geçiş
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+
+  // 2. hafif genişleterek tekrar — aliasing lekelerini toplar
+  ctx.shadowColor = "#ffffff";
+  ctx.shadowBlur = 0.6;
+  ctx.fillRect(r.x - 0.5, r.y - 0.5, r.w + 1, r.h + 1);
+
+  // 3. garanti beyaz
+  ctx.shadowBlur = 0;
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+
+  ctx.restore();
+}
+
+/** Yazıyı kutuya sığdırıp ortalar. */
+function drawFittedText(
   ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  cy: number,
-  maxW: number,
-  refH: number
+  lang: { code: string; rtl?: boolean },
+  raw: string,
+  r: Rect
 ) {
+  const text = decodeHtml(raw);
   const family = "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-  let size = Math.max(9, Math.floor(refH * 0.85));
+  const maxW = Math.max(20, r.w - 8);
+  const targetH = Math.max(9, Math.floor(r.h * 0.80)); // kutunun %80'i
+
+  ctx.textBaseline = "middle";
+  ctx.direction = lang.rtl ? "rtl" : "ltr";
+  ctx.textAlign = lang.rtl ? "right" : "left";
+
+  let size = targetH;
   for (; size >= 8; size--) {
-    ctx.font = `${size}px ${family}`;
-    const w = ctx.measureText(text).width;
-    if (w <= maxW) {
-      ctx.fillStyle = "#000";
-      ctx.fillText(text, x, cy);
-      return;
-    }
+    ctx.font = `600 ${size}px ${family}`;
+    if (ctx.measureText(text).width <= maxW) break;
   }
-  ctx.font = `8px ${family}`;
-  let t = text;
-  while (ctx.measureText(t + "…").width > maxW && t.length > 1) t = t.slice(0, -1);
+
+  const x = lang.rtl ? r.x + r.w - 4 : r.x + 4;
+  const y = r.y + r.h / 2;
+
   ctx.fillStyle = "#000";
-  ctx.fillText(t + "…", x, cy);
+  ctx.fillText(text, x, y);
 }
 
 function decodeHtml(s: string) {
@@ -251,6 +284,7 @@ function decodeHtml(s: string) {
   el.innerHTML = s;
   return el.value;
 }
+
 
 
 
