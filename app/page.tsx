@@ -97,19 +97,18 @@ export default function Page() {
       const ch = img.height * SCALE;
 
       const canvas = canvasRef.current!;
-      const ctx = canvas.getContext("2d")!;
+      const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
       canvas.width = cw;
       canvas.height = ch;
 
       ctx.imageSmoothingEnabled = true;
-      // @ts-ignore
-      if ((ctx as any).imageSmoothingQuality) (ctx as any).imageSmoothingQuality = "high";
+      (ctx as any).imageSmoothingQuality = "high";
 
       // Arkaplanı çiz
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0, cw, ch);
 
-      // 4) Kutuları maskele + çevirileri yaz
+      // 4) Kutuları maskele + çevirileri yaz (arka planı koruyan yöntem)
       const rtl = LANG_CODE[lang] === "ar";
       for (const it of items) {
         const bx = Math.max(0, Math.round(it.x * SCALE));
@@ -117,46 +116,39 @@ export default function Page() {
         const bw = Math.max(1, Math.round(it.w * SCALE));
         const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        // kenarlara pay
-        const margin = Math.max(4, Math.round(Math.min(bw, bh) * 0.12));
+        // Daha az kenar payı (dikdörtgen hissini azaltır)
+        const pad = Math.max(2, Math.round(Math.min(bw, bh) * 0.06));
+        const ix = clamp(bx - pad, 0, cw);
+        const iy = clamp(by - pad, 0, ch);
+        const iw = clamp(bw + pad * 2, 1, cw - ix);
+        const ih = clamp(bh + pad * 2, 1, ch - iy);
 
-        // hedef (canvas ölçeğinde)
-        const ix = clamp(bx - margin, 0, cw);
-        const iy = clamp(by - margin, 0, ch);
-        const iw = clamp(bw + margin * 2, 1, cw - ix);
-        const ih = clamp(bh + margin * 2, 1, ch - iy);
+        // 4.a) Bölgeyi çok hafif blur’la yumuşat
+        blurPatch(ctx, ix, iy, iw, ih, 2);
 
-        // kaynak (orijinal img koordinatlarında) -> doğru bölgeyi kırp
-        const sx = clamp(Math.floor(ix / SCALE), 0, img.width);
-        const sy = clamp(Math.floor(iy / SCALE), 0, img.height);
-        const sw = clamp(Math.ceil(iw / SCALE), 1, img.width - sx);
-        const sh = clamp(Math.ceil(ih / SCALE), 1, img.height - sy);
+        // 4.b) Bölgenin ortalama rengine yakın düşük alfa dolgu
+        const avg = avgColor(ctx, ix, iy, iw, ih, 6);
+        ctx.save();
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = `rgb(${avg.r},${avg.g},${avg.b})`;
+        ctx.fillRect(ix, iy, iw, ih);
+        ctx.restore();
 
-        // Güvenli feature check (TS daraltma yok)
-        const canFilter =
-          typeof (ctx as unknown as { filter?: string }).filter === "string";
-
-        if (canFilter) {
-          // Yerel arka planı blur’layıp kutuya yerleştir
-          const c = ctx as unknown as CanvasRenderingContext2D & { filter: string };
-          c.save();
-          const blurPx = Math.max(1, Math.round(Math.min(iw, ih) * 0.04));
-          c.filter = `blur(${blurPx}px)`;
-          c.drawImage(img, sx, sy, sw, sh, ix, iy, iw, ih);
-          c.filter = "none";
-          c.restore();
-        } else {
-          // Fallback: hafif şeffaf dolgu (arkaplanı tamamen öldürmeden)
-          ctx.save();
-          ctx.globalAlpha = 0.35;
-          ctx.fillStyle = "#fff";
-          ctx.fillRect(ix, iy, iw, ih);
-          ctx.restore();
-        }
-
+        // 4.c) Metin
         const clean = decodeHTMLEntities(it.translated || it.text);
-        // Metni orijinal satır kutusuna yerleştir (payı sadece arka plan için kullandık)
+        const lum = 0.2126 * avg.r + 0.7152 * avg.g + 0.0722 * avg.b;
+        const textColor = lum > 185 ? "#111" : "#000";
+
+        ctx.save();
+        ctx.fillStyle = textColor;
+        // Doku üzerinde okunurluğu artıran hafif halo
+        ctx.shadowColor = "rgba(255,255,255,0.35)";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+
         drawTextInBox(ctx, clean, bx, by, bw, bh, rtl);
+        ctx.restore();
       }
 
       // 5) PNG indir linki
@@ -277,7 +269,7 @@ export default function Page() {
             ))}
           </select>
 
-        <button
+          <button
             onClick={onTranslatePNG}
             disabled={!file || busy}
             style={{
@@ -336,7 +328,6 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-// Basit HTML entity çözümü
 function decodeHTMLEntities(s: string) {
   return s
     .replace(/&quot;/g, '"')
@@ -347,8 +338,7 @@ function decodeHTMLEntities(s: string) {
 }
 
 /**
- * Kutuya sığacak şekilde fontu küçültür, metni satırlara böler ve çizer.
- * Ölçüm ve çizim 600 (semi-bold) ile yapılıyor.
+ * Metni kutuya sığdırıp çizer.
  */
 function drawTextInBox(
   ctx: CanvasRenderingContext2D,
@@ -366,7 +356,6 @@ function drawTextInBox(
 
   const setFont = (size: number) => (ctx.font = `600 ${size}px ${family}`);
 
-  // 1) Font boyutunu kutuya sığdırana kadar küçült
   let fontSize = Math.max(10, Math.floor(h * 0.7));
   let lines: string[] = [];
 
@@ -381,8 +370,6 @@ function drawTextInBox(
     fontSize -= 1;
   }
 
-  // 2) Çizim
-  ctx.fillStyle = "#000";
   ctx.textBaseline = "top";
   ctx.textAlign = rtl ? "right" : "left";
   setFont(fontSize);
@@ -435,6 +422,57 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   if (buf) out.push(buf);
   return out;
 }
+
+/* ---------- Yeni yardımcılar: blur + ortalama renk ---------- */
+
+// Bölgesel blur (yalnızca seçili yama)
+function blurPatch(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  radiusPx: number
+) {
+  const tmp = document.createElement("canvas");
+  tmp.width = Math.max(1, Math.round(sw));
+  tmp.height = Math.max(1, Math.round(sh));
+  const tctx = tmp.getContext("2d") as CanvasRenderingContext2D;
+
+  // Kaynaktan kopyala
+  tctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, tmp.width, tmp.height);
+  // Hafif blur
+  (tctx as any).filter = `blur(${radiusPx}px)`;
+  tctx.drawImage(tmp, 0, 0);
+
+  // Geri yapıştır
+  ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, sx, sy, sw, sh);
+}
+
+// Ortalama renk (hız için step ile seyrek örnekleme)
+function avgColor(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  step = 4
+) {
+  const data = ctx.getImageData(x, y, w, h).data;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let j = 0; j < h; j += step) {
+    for (let i = 0; i < w; i += step) {
+      const idx = ((j * w) + i) * 4;
+      r += data[idx];
+      g += data[idx + 1];
+      b += data[idx + 2];
+      n++;
+    }
+  }
+  if (n === 0) return { r: 255, g: 255, b: 255 };
+  return { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) };
+}
+
 
 
 
