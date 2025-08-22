@@ -4,15 +4,13 @@
 import NextImage from "next/image";
 import { useRef, useState } from "react";
 
-/* =================== tunable constants =================== */
-const PATCH_EXPAND_X = 1.10;     // yatayda kutuyu büyütme
-const PATCH_EXPAND_Y = 1.45;     // dikeyde kutuyu büyütme
-const EDGE_PAD      = 0.18;      // kutu kenar payı (min %)
-const BLUR_RADIUS   = 2 as 2 | 3;// 2 => 3x3, 3 => 5x5
-const DARK_LUMA     = 0.60;      // luma < bu ise koyu say
-const BLEND_STRENGTH= 0.85;      // koyu pikselleri ortalamaya yaklaştırma
+/* ==== ayarlanabilir sabitler ==== */
+const PATCH_EXPAND_X = 1.08;     // yatay büyütme (şerit oluşmasın)
+const PATCH_EXPAND_Y = 1.40;     // dikey büyütme
+const EDGE_PAD       = 0.16;     // kenar payı
+const BLUR_RADIUS    = 2 as 2 | 3; // 2 => 3x3, 3 => 5x5
+const TEXTURE_ALPHA  = 0.18;     // dokuyu geri eklerken opaklık
 
-/* =================== languages =================== */
 type UiLang =
   | "English" | "Türkçe" | "Русский" | "العربية" | "Српски"
   | "Deutsch" | "Español" | "Français" | "Italiano";
@@ -53,7 +51,7 @@ export default function Page() {
     setBusy(true); setDownloadURL(null);
 
     try {
-      // 1) OCR + translate
+      // 1) OCR + Translation
       const fd = new FormData();
       fd.append("file", file);
       fd.append("targetLang", lang);
@@ -62,11 +60,11 @@ export default function Page() {
       const data: { items: Item[] } = await res.json();
       const items = data.items ?? [];
 
-      // 2) load original
+      // 2) Görseli yükle
       const imgURL = URL.createObjectURL(file);
       const img = await loadImage(imgURL);
 
-      // 3) canvas
+      // 3) Canvas
       const SCALE = 3;
       const cw = img.width * SCALE, ch = img.height * SCALE;
       const canvas = canvasRef.current!;
@@ -78,30 +76,30 @@ export default function Page() {
       ctx.clearRect(0,0,cw,ch);
       ctx.drawImage(img, 0,0, cw,ch);
 
-      // 4) clean + draw
+      // 4) Temizle + Yaz
       const rtl = LANG_CODE[lang] === "ar";
       for (const it of items) {
+        // kutu & hafif büyütme
         const bx = Math.max(0, Math.round(it.x * SCALE));
         const by = Math.max(0, Math.round(it.y * SCALE));
         const bw = Math.max(1, Math.round(it.w * SCALE));
         const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        // daha kontrollü genişletme (şerit oluşmasın)
         const pad = Math.max(4, Math.round(Math.min(bw, bh) * EDGE_PAD));
         const rx  = clamp(Math.round(bx - pad), 0, cw);
         const ry  = clamp(Math.round(by - bh * (PATCH_EXPAND_Y - 1) * 0.55) - pad, 0, ch);
         const rw  = clamp(Math.round(bw * PATCH_EXPAND_X) + pad * 2, 1, cw - rx);
         const rh  = clamp(Math.round(bh * PATCH_EXPAND_Y) + pad * 2, 1, ch - ry);
 
-        // 4.a: sadece koyu pikselleri arka plan ortalamasına yaklaştır (beyaz rect yok)
-        cleanPatchSelective(ctx, rx, ry, rw, rh, BLUR_RADIUS, DARK_LUMA, BLEND_STRENGTH);
+        // — metni %100 yok et: çevre halkasından renk al, opak doldur, doku ekle
+        obliterateWithRing(ctx, rx, ry, rw, rh, BLUR_RADIUS, TEXTURE_ALPHA);
 
-        // 4.b: çeviri yaz
-        const clean = decodeHTMLEntities(it.translated || it.text);
-        drawTextInBox(ctx, clean, rx, ry, rw, rh, rtl);
+        // — çeviriyi yaz
+        const text = decodeHTMLEntities(it.translated || it.text);
+        drawTextInBox(ctx, text, rx, ry, rw, rh, rtl);
       }
 
-      // 5) export
+      // 5) İndirilebilir PNG
       const blob = await new Promise<Blob>((resolve) =>
         canvas.toBlob((b) => resolve(b as Blob), "image/png")
       );
@@ -125,6 +123,7 @@ export default function Page() {
         <div style={{ marginTop:8, fontSize:28, opacity:0.9 }}>MEDICAL TRANSLATOR</div>
       </div>
 
+      {/* Upload alanı (tıklanabilir + drag&drop) */}
       <div style={{
         width:"100%", maxWidth:880, borderRadius:16, background:"#17171b",
         border:"1px solid #2a2a31", padding:28,
@@ -162,17 +161,17 @@ export default function Page() {
             {Object.keys(LANG_CODE).map(k => <option key={k} value={k}>{k}</option>)}
           </select>
 
-          <button
-            onClick={onTranslatePNG} disabled={!file || busy}
-            style={{
-              background: file && !busy ? "#fff" : "#2c2c32",
-              color: file && !busy ? "#111" : "#888",
-              fontWeight:700, borderRadius:10, padding:"10px 16px",
-              border:"none", cursor: file && !busy ? "pointer" : "not-allowed",
-            }}
-          >
-            {busy ? "Working..." : "Get translated PNG"}
-          </button>
+        <button
+          onClick={onTranslatePNG} disabled={!file || busy}
+          style={{
+            background: file && !busy ? "#fff" : "#2c2c32",
+            color: file && !busy ? "#111" : "#888",
+            fontWeight:700, borderRadius:10, padding:"10px 16px",
+            border:"none", cursor: file && !busy ? "pointer" : "not-allowed",
+          }}
+        >
+          {busy ? "Working..." : "Get translated PNG"}
+        </button>
 
           {downloadURL && (
             <a href={downloadURL} download="translated.png" style={{ marginLeft:8, textDecoration:"underline" }}>
@@ -189,7 +188,8 @@ export default function Page() {
   );
 }
 
-/* =================== helpers =================== */
+/* ================= helpers ================= */
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new window.Image();
@@ -198,49 +198,83 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.src = url;
   });
 }
-function clamp(n:number, min:number, max:number) {
-  return Math.min(max, Math.max(min, n));
-}
+function clamp(n:number, min:number, max:number) { return Math.min(max, Math.max(min, n)); }
 function decodeHTMLEntities(s: string) {
   return s.replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 
-/** — Selective cleaning: blur, sonra koyu pikselleri ortalamaya yaklaştır — */
-function cleanPatchSelective(
+/** Kutuyu %100 kapatır: çevre halkasından ortalama rengi alır, opak boyar, sonra
+ *  çevresinin bulanık kopyasını çok düşük opaklıkla sadece kutu içinde karıştırır.
+ *  Böylece doku korunur, alttaki metin tamamen yok olur. */
+function obliterateWithRing(
   ctx: CanvasRenderingContext2D,
   x:number, y:number, w:number, h:number,
-  blur: 2 | 3, darkLuma:number, strength:number
-) {
+  blur:2|3, textureAlpha:number
+){
   if (w<=0 || h<=0) return;
-  // 1) hafif blur
-  blurPatch(ctx, x,y,w,h, blur);
 
-  // 2) ortalama renk
-  let avg = { r:240, g:240, b:240 };
-  try { avg = averageRGB(ctx, x,y,w,h); } catch {}
+  // 1) çevre halkasından ortalama renk
+  const ring = Math.max(6, Math.floor(Math.min(w,h)*0.10));
+  const avg  = ringAverageRGB(ctx, x,y,w,h, ring);
 
-  // 3) sadece koyu pikselleri avg'ye yaklaştır
-  let img: ImageData;
-  try { img = ctx.getImageData(x,y,w,h); } catch { return; }
-  const d = img.data;
-  for (let i=0; i<d.length; i+=4) {
-    const r=d[i], g=d[i+1], b=d[i+2];
-    const l = (0.2126*r + 0.7152*g + 0.0722*b) / 255; // 0..1
-    if (l < darkLuma) {
-      d[i]   = r + (avg.r - r) * strength;
-      d[i+1] = g + (avg.g - g) * strength;
-      d[i+2] = b + (avg.b - b) * strength;
-      d[i+3] = 255;
-    }
-  }
-  ctx.putImageData(img, x,y);
+  // 2) opak doldur
+  ctx.save();
+  ctx.fillStyle = `rgb(${avg.r},${avg.g},${avg.b})`;
+  ctx.fillRect(x,y,w,h);
+  ctx.restore();
 
-  // 4) kenarları yumuşat
-  blurPatch(ctx, x,y,w,h, 2);
+  // 3) çevre alanının bulanık kopyasını, sadece bu kutuya clip ederek ekle
+  const bx = clamp(x - ring*2, 0, ctx.canvas.width  - 1);
+  const by = clamp(y - ring*2, 0, ctx.canvas.height - 1);
+  const bw = clamp(w + ring*4, 1, ctx.canvas.width  - bx);
+  const bh = clamp(h + ring*4, 1, ctx.canvas.height - by);
+
+  // offscreen canvas oluştur
+  const off = document.createElement("canvas");
+  off.width = bw; off.height = bh;
+  const octx = off.getContext("2d") as CanvasRenderingContext2D;
+  octx.putImageData(ctx.getImageData(bx,by,bw,bh), 0, 0);
+  blurPatch(octx, 0,0,bw,bh, blur);
+  blurPatch(octx, 0,0,bw,bh, blur); // iki geçiş
+
+  // ana tuvale, sadece kutu içine karıştır
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
+  ctx.globalAlpha = textureAlpha;
+  ctx.drawImage(off, bx,by);
+  ctx.restore();
 }
 
-/** Box blur (iki geçiş) */
-function blurPatch(ctx: CanvasRenderingContext2D, x:number, y:number, w:number, h:number, radius:2|3=2) {
+/** ring (dış şeritler) üzerinden ortalama renk */
+function ringAverageRGB(
+  ctx: CanvasRenderingContext2D,
+  x:number,y:number,w:number,h:number,
+  ring:number
+){
+  const rects = [
+    {x: x,       y: y-ring, w: w,       h: ring},          // top
+    {x: x,       y: y+h,    w: w,       h: ring},          // bottom
+    {x: x-ring,  y: y,      w: ring,    h: h},             // left
+    {x: x+w,     y: y,      w: ring,    h: h},             // right
+  ];
+  let r=0,g=0,b=0,c=0;
+  for (const R of rects){
+    const rx = clamp(R.x, 0, ctx.canvas.width-1);
+    const ry = clamp(R.y, 0, ctx.canvas.height-1);
+    const rw = clamp(R.w, 1, ctx.canvas.width-rx);
+    const rh = clamp(R.h, 1, ctx.canvas.height-ry);
+    if (rw<=0 || rh<=0) continue;
+    const img = ctx.getImageData(rx,ry,rw,rh);
+    const d = img.data;
+    const step = Math.max(1, Math.floor((rw*rh)/2000));
+    for (let i=0;i<d.length;i+=4*step){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; c++; }
+  }
+  if (!c) return averageRGB(ctx, x,y,w,h); // kenardaysa
+  return { r: Math.round(r/c), g: Math.round(g/c), b: Math.round(b/c) };
+}
+
+/** basit box blur (iki geçiş) */
+function blurPatch(ctx: CanvasRenderingContext2D, x:number,y:number,w:number,h:number, radius:2|3=2) {
   let img: ImageData;
   try { img = ctx.getImageData(x,y,w,h); } catch { return; }
   const data = img.data;
@@ -273,7 +307,7 @@ function blurPatch(ctx: CanvasRenderingContext2D, x:number, y:number, w:number, 
   ctx.putImageData(img, x,y);
 }
 
-/** bölgenin ortalama rengi */
+/** fallback ortalama */
 function averageRGB(ctx: CanvasRenderingContext2D, x:number,y:number,w:number,h:number){
   const img = ctx.getImageData(x,y,w,h);
   const d = img.data;
@@ -317,7 +351,6 @@ function drawTextInBox(
     if (cy>y+h-pad) break;
   }
 }
-
 function wrapLines(ctx: CanvasRenderingContext2D, text:string, maxWidth:number){
   const words = text.split(/\s+/).filter(Boolean);
   const out:string[]=[]; let line="";
@@ -343,3 +376,4 @@ function breakLongWord(ctx:CanvasRenderingContext2D, word:string, maxWidth:numbe
   if (buf) out.push(buf);
   return out;
 }
+
