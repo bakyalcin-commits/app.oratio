@@ -87,12 +87,12 @@ export default function Page() {
       const data: { items: Item[] } = await res.json();
       const items = data.items ?? [];
 
-      // 2) Kaynak görseli yükle
+      // 2) Kaynak görseli
       const imgURL = URL.createObjectURL(file);
       const img = await loadImage(imgURL);
 
-      // 3) Canvas kur
-      const SCALE = 3; // daha keskin çıktı
+      // 3) Canvas
+      const SCALE = 3;
       const cw = img.width * SCALE;
       const ch = img.height * SCALE;
 
@@ -104,11 +104,10 @@ export default function Page() {
       ctx.imageSmoothingEnabled = true;
       (ctx as any).imageSmoothingQuality = "high";
 
-      // Arkaplanı çiz
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0, cw, ch);
 
-      // 4) Kutuları maskele + çevirileri yaz (arka planı koruyan yöntem)
+      // 4) Arka planı koruyarak sil & yaz
       const rtl = LANG_CODE[lang] === "ar";
       for (const it of items) {
         const bx = Math.max(0, Math.round(it.x * SCALE));
@@ -116,42 +115,42 @@ export default function Page() {
         const bw = Math.max(1, Math.round(it.w * SCALE));
         const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        // Daha az kenar payı (dikdörtgen hissini azaltır)
-        const pad = Math.max(2, Math.round(Math.min(bw, bh) * 0.06));
+        // biraz daha geniş pay: yazı tamamen kapansın
+        const pad = Math.max(3, Math.round(Math.min(bw, bh) * 0.10));
         const ix = clamp(bx - pad, 0, cw);
         const iy = clamp(by - pad, 0, ch);
         const iw = clamp(bw + pad * 2, 1, cw - ix);
         const ih = clamp(bh + pad * 2, 1, ch - iy);
 
-        // 4.a) Bölgeyi çok hafif blur’la yumuşat
+        // 4.a) iki kez hafif blur
+        blurPatch(ctx, ix, iy, iw, ih, 2);
         blurPatch(ctx, ix, iy, iw, ih, 2);
 
-        // 4.b) Bölgenin ortalama rengine yakın düşük alfa dolgu
+        // 4.b) ortalama renkle feathered dolgu (merkez daha opak, kenarlar yumuşar)
         const avg = avgColor(ctx, ix, iy, iw, ih, 6);
+        featherFill(ctx, ix, iy, iw, ih, avg, 0.32, 14);
+
+        // 4.c) koyu harf kalıntılarını biraz daha “lighten”
         ctx.save();
-        ctx.globalAlpha = 0.18;
-        ctx.fillStyle = `rgb(${avg.r},${avg.g},${avg.b})`;
+        ctx.globalAlpha = 0.10;
+        ctx.fillStyle = "#fff";
         ctx.fillRect(ix, iy, iw, ih);
         ctx.restore();
 
-        // 4.c) Metin
+        // 4.d) metin (daha büyük başlayıp sığdır)
         const clean = decodeHTMLEntities(it.translated || it.text);
+
+        // arka plan parlaklığına göre renk
         const lum = 0.2126 * avg.r + 0.7152 * avg.g + 0.0722 * avg.b;
-        const textColor = lum > 185 ? "#111" : "#000";
+        const fill = lum > 185 ? "#111" : "#000";
 
         ctx.save();
-        ctx.fillStyle = textColor;
-        // Doku üzerinde okunurluğu artıran hafif halo
-        ctx.shadowColor = "rgba(255,255,255,0.35)";
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-
+        ctx.fillStyle = fill;
         drawTextInBox(ctx, clean, bx, by, bw, bh, rtl);
         ctx.restore();
       }
 
-      // 5) PNG indir linki
+      // 5) indirme
       const blob = await new Promise<Blob>((resolve) =>
         canvas.toBlob((b) => resolve(b as Blob), "image/png")
       );
@@ -179,7 +178,6 @@ export default function Page() {
         padding: "48px 16px 64px",
       }}
     >
-      {/* Logo & Başlık */}
       <div style={{ width: "100%", maxWidth: 880 }}>
         <NextImage
           src="/oratio.png"
@@ -194,7 +192,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Upload alanı (tıklanabilir + drag&drop) */}
+      {/* Upload */}
       <div
         style={{
           width: "100%",
@@ -297,7 +295,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Önizleme Canvas */}
+      {/* Önizleme */}
       <div style={{ width: "100%", maxWidth: 880 }}>
         <canvas
           ref={canvasRef}
@@ -313,7 +311,7 @@ export default function Page() {
   );
 }
 
-/* ————— yardımcılar ————— */
+/* ————— helpers ————— */
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -337,9 +335,7 @@ function decodeHTMLEntities(s: string) {
     .replace(/&gt;/g, ">");
 }
 
-/**
- * Metni kutuya sığdırıp çizer.
- */
+/** Kutuyu daha dolgun dolduracak font & hafif stroke ile çizim */
 function drawTextInBox(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -350,23 +346,21 @@ function drawTextInBox(
   rtl: boolean
 ) {
   const pad = Math.max(6, Math.floor(Math.min(w, h) * 0.08));
-  const lineGap = 1.25;
+  const lineGap = 1.22;
   const family =
     `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
-
   const setFont = (size: number) => (ctx.font = `600 ${size}px ${family}`);
 
-  let fontSize = Math.max(10, Math.floor(h * 0.7));
+  // Daha büyükten başla, sığana kadar küçült
+  let fontSize = Math.max(16, Math.floor(h * 0.95));
   let lines: string[] = [];
 
   while (fontSize >= 10) {
     setFont(fontSize);
     lines = wrapLines(ctx, text, w - pad * 2);
-
     const needH = lines.length * fontSize * lineGap;
     const widest = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
     if (needH <= h - pad * 2 && widest <= w - pad * 2) break;
-
     fontSize -= 1;
   }
 
@@ -377,7 +371,12 @@ function drawTextInBox(
   const startX = rtl ? x + w - pad : x + pad;
   let cy = y + pad;
 
+  // okunabilirlik için hafif stroke
+  ctx.lineWidth = Math.max(1, Math.floor(fontSize * 0.08));
+  ctx.strokeStyle = "rgba(255,255,255,0.60)";
+
   for (const ln of lines) {
+    ctx.strokeText(ln, startX, cy);
     ctx.fillText(ln, startX, cy);
     cy += fontSize * lineGap;
     if (cy > y + h - pad) break;
@@ -423,9 +422,8 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   return out;
 }
 
-/* ---------- Yeni yardımcılar: blur + ortalama renk ---------- */
+/* ---------- yeni: blur + feather dolgu + ortalama renk ---------- */
 
-// Bölgesel blur (yalnızca seçili yama)
 function blurPatch(
   ctx: CanvasRenderingContext2D,
   sx: number,
@@ -439,17 +437,12 @@ function blurPatch(
   tmp.height = Math.max(1, Math.round(sh));
   const tctx = tmp.getContext("2d") as CanvasRenderingContext2D;
 
-  // Kaynaktan kopyala
   tctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, tmp.width, tmp.height);
-  // Hafif blur
   (tctx as any).filter = `blur(${radiusPx}px)`;
   tctx.drawImage(tmp, 0, 0);
-
-  // Geri yapıştır
   ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, sx, sy, sw, sh);
 }
 
-// Ortalama renk (hız için step ile seyrek örnekleme)
 function avgColor(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -472,6 +465,53 @@ function avgColor(
   if (n === 0) return { r: 255, g: 255, b: 255 };
   return { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) };
 }
+
+function featherFill(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  col: { r: number; g: number; b: number },
+  alphaCenter = 0.32,
+  feather = 12
+) {
+  const rgb = (a: number) => `rgba(${col.r},${col.g},${col.b},${a})`;
+  ctx.save();
+
+  // merkez
+  ctx.globalAlpha = alphaCenter;
+  ctx.fillStyle = rgb(1);
+  ctx.fillRect(x, y, w, h);
+
+  // kenarlar (yumuşak geçiş)
+  const l = ctx.createLinearGradient(x, y, x + feather, y);
+  l.addColorStop(0, rgb(alphaCenter));
+  l.addColorStop(1, rgb(0));
+  ctx.fillStyle = l;
+  ctx.fillRect(x, y, feather, h);
+
+  const r = ctx.createLinearGradient(x + w - feather, y, x + w, y);
+  r.addColorStop(0, rgb(0));
+  r.addColorStop(1, rgb(alphaCenter));
+  ctx.fillStyle = r;
+  ctx.fillRect(x + w - feather, y, feather, h);
+
+  const t = ctx.createLinearGradient(x, y, x, y + feather);
+  t.addColorStop(0, rgb(alphaCenter));
+  t.addColorStop(1, rgb(0));
+  ctx.fillStyle = t;
+  ctx.fillRect(x, y, w, feather);
+
+  const b = ctx.createLinearGradient(x, y + h - feather, x, y + h);
+  b.addColorStop(0, rgb(0));
+  b.addColorStop(1, rgb(alphaCenter));
+  ctx.fillStyle = b;
+  ctx.fillRect(x, y + h - feather, w, feather);
+
+  ctx.restore();
+}
+
 
 
 
