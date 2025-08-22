@@ -4,7 +4,7 @@
 import NextImage from "next/image";
 import { useRef, useState } from "react";
 
-/* ---------- diller ---------- */
+/* ---------- languages ---------- */
 type UiLang =
   | "English"
   | "Türkçe"
@@ -87,11 +87,11 @@ export default function Page() {
       const data: { items: Item[] } = await res.json();
       const items = data.items ?? [];
 
-      // 2) Kaynak görseli yükle
+      // 2) load original image
       const imgURL = URL.createObjectURL(file);
       const img = await loadImage(imgURL);
 
-      // 3) Canvas
+      // 3) canvas
       const SCALE = 3;
       const cw = img.width * SCALE;
       const ch = img.height * SCALE;
@@ -105,44 +105,31 @@ export default function Page() {
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0, cw, ch);
 
-      // 4) Arka yazıyı "sil" + çeviriyi yaz
+      // 4) background-clean + draw text
       const rtl = LANG_CODE[lang] === "ar";
 
       for (const it of items) {
-        // kaynak kutu
         const bx = Math.max(0, Math.round(it.x * SCALE));
         const by = Math.max(0, Math.round(it.y * SCALE));
         const bw = Math.max(1, Math.round(it.w * SCALE));
         const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        // satırı genişlet (daha büyük yazı ve iyi kapama)
-        const M = Math.max(4, Math.round(Math.min(bw, bh) * 0.25)); // dış pay
-        const rx = clamp(bx - M, 0, cw);
-        const ry = clamp(Math.round(by - bh * 0.35) - 1, 0, ch);     // yukarı doğru genişlet
-        const rw = clamp(Math.round(bw * 1.15) + M * 2, 1, cw - rx); // yatayda %
-        const rh = clamp(Math.round(bh * 1.6) + M, 1, ch - ry);      // dikeyde %
+        // expand region for better cover & bigger font
+        const pad = Math.max(4, Math.round(Math.min(bw, bh) * 0.25));
+        const rx = clamp(bx - pad, 0, cw);
+        const ry = clamp(Math.round(by - bh * 0.45), 0, ch);           // daha yukarıdan başla
+        const rw = clamp(Math.round(bw * 1.18) + pad * 2, 1, cw - rx); // yatay %
+        const rh = clamp(Math.round(bh * 1.75) + pad, 1, ch - ry);     // dikey %
 
-        // 4.a) Lokal blur ile arka yazıyı yumuşat
-        blurPatch(ctx, rx, ry, rw, rh, 2); // radius 2 (3×3)
+        // temizle: blur + lighten + çok hafif lokal renk
+        cleanPatch(ctx, rx, ry, rw, rh);
 
-        // 4.b) Ortalama renkle çok hafif tonda "renklendir" (dokuyu öldürmeden)
-        try {
-          const avg = averageRGB(ctx, rx, ry, rw, rh);
-          ctx.save();
-          (ctx as any).globalAlpha = 0.18; // çok hafif
-          ctx.fillStyle = `rgb(${avg.r},${avg.g},${avg.b})`;
-          ctx.fillRect(rx, ry, rw, rh);
-          ctx.restore();
-        } catch {
-          // getImageData güvenlik nedeniyle atarsa: hiç renklendirme yapma
-        }
-
-        // 4.c) Metni yaz
+        // draw text
         const clean = decodeHTMLEntities(it.translated || it.text);
         drawTextInBox(ctx, clean, rx, ry, rw, rh, rtl);
       }
 
-      // 5) PNG indir
+      // 5) export
       const blob = await new Promise<Blob>((resolve) =>
         canvas.toBlob((b) => resolve(b as Blob), "image/png")
       );
@@ -169,7 +156,7 @@ export default function Page() {
         padding: "48px 16px 64px",
       }}
     >
-      {/* Logo & Başlık */}
+      {/* header */}
       <div style={{ width: "100%", maxWidth: 880 }}>
         <NextImage
           src="/oratio.png"
@@ -184,7 +171,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Upload alanı */}
+      {/* uploader */}
       <div
         style={{
           width: "100%",
@@ -227,7 +214,6 @@ export default function Page() {
           </div>
           <input
             ref={inputRef}
-            id="file"
             type="file"
             accept="image/png,image/jpeg"
             hidden
@@ -286,7 +272,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Önizleme Canvas */}
+      {/* preview */}
       <div style={{ width: "100%", maxWidth: 880 }}>
         <canvas
           ref={canvasRef}
@@ -302,7 +288,7 @@ export default function Page() {
   );
 }
 
-/* ---------- yardımcılar ---------- */
+/* ---------- helpers ---------- */
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -312,11 +298,9 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.src = url;
   });
 }
-
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
-
 function decodeHTMLEntities(s: string) {
   return s
     .replace(/&quot;/g, '"')
@@ -326,81 +310,130 @@ function decodeHTMLEntities(s: string) {
     .replace(/&gt;/g, ">");
 }
 
-/** Patch içini 3×3 kutu blur ile yumuşatır (hızlı ve güvenli). */
+/** region temizliği: blur + lighten + hafif lokal renk */
+function cleanPatch(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+) {
+  // 1) blur (3 → 5x5)
+  blurPatch(ctx, x, y, w, h, 3);
+
+  // 2) lighten – screen varsa onu kullan, yoksa piksel bazlı
+  if (isBlendSupported(ctx, "screen")) {
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = "rgba(255,255,255,0.45)"; // koyu mürekkebi aç
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+  } else {
+    // fallback: piksel bazlı lighten
+    lightenPatch(ctx, x, y, w, h, 0.45);
+  }
+
+  // 3) çok hafif yerel renk kaplama (doku tonu korunsun)
+  try {
+    const avg = averageRGB(ctx, x, y, w, h);
+    ctx.save();
+    (ctx as any).globalAlpha = 0.10;
+    ctx.fillStyle = `rgb(${avg.r},${avg.g},${avg.b})`;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+  } catch {
+    /* getImageData engellenirse atla */
+  }
+}
+
+/** canvas blend modu destek kontrolü */
+function isBlendSupported(ctx: CanvasRenderingContext2D, mode: GlobalCompositeOperation) {
+  const prev = ctx.globalCompositeOperation;
+  ctx.globalCompositeOperation = mode;
+  const ok = ctx.globalCompositeOperation === mode;
+  ctx.globalCompositeOperation = prev;
+  return ok;
+}
+
+/** Kutusal blur (iki geçişli box blur) */
 function blurPatch(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   w: number,
   h: number,
-  radius: 1 | 2 = 2
+  radius: 2 | 3 = 2
 ) {
-  // sınır güvenliği
   if (w <= 0 || h <= 0) return;
   let img: ImageData;
   try {
     img = ctx.getImageData(x, y, w, h);
   } catch {
-    return; // güvenlik engeli varsa pas
+    return;
   }
   const data = img.data;
   const tmp = new Uint8ClampedArray(data.length);
-
   const rw = w | 0;
   const rh = h | 0;
-  const kernelSize = radius === 1 ? 3 : 5; // 3×3 veya 5×5
+  const kernelSize = radius === 3 ? 5 : 3; // 5x5 veya 3x3
   const k = Math.floor(kernelSize / 2);
 
-  // yatay geçiş
+  // yatay
   for (let j = 0; j < rh; j++) {
     for (let i = 0; i < rw; i++) {
-      let r = 0,
-        g = 0,
-        b = 0;
-      let c = 0;
+      let r = 0, g = 0, b = 0, c = 0;
       for (let dx = -k; dx <= k; dx++) {
         const ii = clamp(i + dx, 0, rw - 1);
         const idx = (j * rw + ii) * 4;
-        r += data[idx];
-        g += data[idx + 1];
-        b += data[idx + 2];
-        c++;
+        r += data[idx]; g += data[idx + 1]; b += data[idx + 2]; c++;
       }
       const t = (j * rw + i) * 4;
-      tmp[t] = r / c;
-      tmp[t + 1] = g / c;
-      tmp[t + 2] = b / c;
-      tmp[t + 3] = 255;
+      tmp[t] = r / c; tmp[t + 1] = g / c; tmp[t + 2] = b / c; tmp[t + 3] = 255;
     }
   }
-
-  // dikey geçiş
+  // dikey
   for (let j = 0; j < rh; j++) {
     for (let i = 0; i < rw; i++) {
-      let r = 0,
-        g = 0,
-        b = 0;
-      let c = 0;
+      let r = 0, g = 0, b = 0, c = 0;
       for (let dy = -k; dy <= k; dy++) {
         const jj = clamp(j + dy, 0, rh - 1);
         const idx = (jj * rw + i) * 4;
-        r += tmp[idx];
-        g += tmp[idx + 1];
-        b += tmp[idx + 2];
-        c++;
+        r += tmp[idx]; g += tmp[idx + 1]; b += tmp[idx + 2]; c++;
       }
       const t = (j * rw + i) * 4;
-      data[t] = r / c;
-      data[t + 1] = g / c;
-      data[t + 2] = b / c;
-      data[t + 3] = 255;
+      data[t] = r / c; data[t + 1] = g / c; data[t + 2] = b / c; data[t + 3] = 255;
     }
   }
-
   ctx.putImageData(img, x, y);
 }
 
-/** Bölgenin ortalama rengini döndürür. */
+/** fallback: pikselleri beyaza doğru taşır (lighten) */
+function lightenPatch(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  amount: number // 0..1
+) {
+  let img: ImageData;
+  try {
+    img = ctx.getImageData(x, y, w, h);
+  } catch {
+    return;
+  }
+  const d = img.data;
+  const a = Math.max(0, Math.min(1, amount));
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = d[i] + (255 - d[i]) * a;
+    d[i + 1] = d[i + 1] + (255 - d[i + 1]) * a;
+    d[i + 2] = d[i + 2] + (255 - d[i + 2]) * a;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(img, x, y);
+}
+
+/** ortalama renk */
 function averageRGB(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -410,21 +443,15 @@ function averageRGB(
 ) {
   const img = ctx.getImageData(x, y, w, h);
   const d = img.data;
-  let r = 0,
-    g = 0,
-    b = 0;
-  const step = Math.max(1, Math.floor((w * h) / 2000)); // örnekleme
-  let cnt = 0;
+  let r = 0, g = 0, b = 0, cnt = 0;
+  const step = Math.max(1, Math.floor((w * h) / 2000));
   for (let i = 0; i < d.length; i += 4 * step) {
-    r += d[i];
-    g += d[i + 1];
-    b += d[i + 2];
-    cnt++;
+    r += d[i]; g += d[i + 1]; b += d[i + 2]; cnt++;
   }
   return { r: Math.round(r / cnt), g: Math.round(g / cnt), b: Math.round(b / cnt) };
 }
 
-/** Metni kutuya sığacak şekilde yazar (daha büyük font için büyük kutu veriyoruz). */
+/** yazı yerleştirme */
 function drawTextInBox(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -440,10 +467,8 @@ function drawTextInBox(
     `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
   const setFont = (size: number) => (ctx.font = `600 ${size}px ${family}`);
 
-  // hedeften büyük başla, sığana kadar küçült
   let fontSize = Math.max(12, Math.floor(h * 0.72));
   let lines: string[] = [];
-
   while (fontSize >= 11) {
     setFont(fontSize);
     lines = wrapLines(ctx, text, w - pad * 2);
@@ -471,7 +496,6 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
   const words = text.split(/\s+/).filter(Boolean);
   const out: string[] = [];
   let line = "";
-
   for (const w of words) {
     const test = line ? line + " " + w : w;
     if (ctx.measureText(test).width <= maxWidth) {
@@ -489,15 +513,13 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
   if (line) out.push(line);
   return out;
 }
-
 function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: number): string[] {
   let buf = "";
   const out: string[] = [];
   for (const ch of word) {
     const t = buf + ch;
-    if (ctx.measureText(t).width <= maxWidth) {
-      buf = t;
-    } else {
+    if (ctx.measureText(t).width <= maxWidth) buf = t;
+    else {
       if (buf) out.push(buf);
       buf = ch;
     }
@@ -505,3 +527,4 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   if (buf) out.push(buf);
   return out;
 }
+
