@@ -1,7 +1,7 @@
 // app/page.tsx
 "use client";
 
-import NextImage from "next/image"; // <-- ADI DEGISTI
+import NextImage from "next/image";
 import { useRef, useState } from "react";
 
 type UiLang =
@@ -109,7 +109,7 @@ export default function Page() {
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0, cw, ch);
 
-      // 4) Kutuları maskele + çevirileri yaz
+      // 4) Kutular: blur + renk yıkama + metin
       const rtl = LANG_CODE[lang] === "ar";
       for (const it of items) {
         const bx = Math.max(0, Math.round(it.x * SCALE));
@@ -117,18 +117,51 @@ export default function Page() {
         const bw = Math.max(1, Math.round(it.w * SCALE));
         const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        // kenarlara pay vererek opak maske
-        const margin = Math.max(4, Math.round(Math.min(bw, bh) * 0.12));
-        const rx = clamp(bx - margin, 0, cw);
-        const ry = clamp(by - margin, 0, ch);
-        const rw = clamp(bw + margin * 2, 1, cw - rx);
-        const rh = clamp(bh + margin * 2, 1, ch - ry);
+        // Kenarlara dokunmamak için içe çek
+        const inner = Math.max(2, Math.round(Math.min(bw, bh) * 0.10));
+        const ix = bx + inner;
+        const iy = by + inner;
+        const iw = Math.max(1, bw - inner * 2);
+        const ih = Math.max(1, bh - inner * 2);
 
-        ctx.fillStyle = "#ffffff"; // TAM opak
-        ctx.fillRect(rx, ry, rw, rh);
+        // --- Yalnızca kutu içinde blur (orijinal doku korunur)
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(ix, iy, iw, ih);
+        ctx.clip();
+
+        if ("filter" in ctx) {
+          (ctx as any).filter = "blur(2.6px) contrast(0.96) brightness(1.02)";
+          ctx.drawImage(img, 0, 0, cw, ch);
+          (ctx as any).filter = "none";
+        } else {
+          // Fallback: hafif opak dolgu
+          ctx.globalAlpha = 0.35;
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(ix, iy, iw, ih);
+          ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+
+        // --- Kutunun ortalama rengini örnekle, hafif yıkama uygula
+        const [r, g, b] = sampleAverage(canvas, ix, iy, iw, ih);
+        ctx.save();
+        ctx.globalAlpha = 0.20; // 0.15–0.30
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(ix, iy, iw, ih);
+        ctx.restore();
+
+        // --- Metin rengi (arka plana göre)
+        const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const fillColor = luminance > 180 ? "#111" : "#fff";
+        const strokeColor = luminance > 180 ? "rgba(255,255,255,.85)" : "rgba(0,0,0,.75)";
 
         const clean = decodeHTMLEntities(it.translated || it.text);
-        drawTextInBox(ctx, clean, bx, by, bw, bh, rtl);
+        drawTextInBox(ctx, clean, ix, iy, iw, ih, rtl, {
+          stroke: true,
+          fill: fillColor,
+          strokeStyle: strokeColor,
+        });
       }
 
       // 5) PNG indir linki
@@ -297,7 +330,7 @@ export default function Page() {
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const img = new window.Image(); // <-- DOM Image constructor
+    const img = new window.Image();
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = url;
@@ -308,7 +341,26 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-// Basit HTML entity çözümü
+// Ortalama renk örnekleme (hız için seyrek piksel)
+function sampleAverage(cv: HTMLCanvasElement, x: number, y: number, w: number, h: number): [number, number, number] {
+  const ctx = cv.getContext("2d")!;
+  const dx = Math.max(0, x);
+  const dy = Math.max(0, y);
+  const dw = Math.max(1, Math.min(cv.width - dx, w));
+  const dh = Math.max(1, Math.min(cv.height - dy, h));
+  const img = ctx.getImageData(dx, dy, dw, dh).data;
+
+  let r = 0, g = 0, b = 0, c = 0;
+  for (let i = 0; i < img.length; i += 32) { // 4 kanallı, her 8 pikselde 1
+    r += img[i];
+    g += img[i + 1];
+    b += img[i + 2];
+    c++;
+  }
+  return [Math.round(r / c), Math.round(g / c), Math.round(b / c)];
+}
+
+// HTML entity çözümü
 function decodeHTMLEntities(s: string) {
   return s
     .replace(/&quot;/g, '"')
@@ -320,7 +372,7 @@ function decodeHTMLEntities(s: string) {
 
 /**
  * Kutuya sığacak şekilde fontu küçültür, metni satırlara böler ve çizer.
- * Ölçüm ve çizim 600 (semi-bold) ile yapılıyor.
+ * Opsiyonla kontur/renk verilebilir.
  */
 function drawTextInBox(
   ctx: CanvasRenderingContext2D,
@@ -329,16 +381,19 @@ function drawTextInBox(
   y: number,
   w: number,
   h: number,
-  rtl: boolean
+  rtl: boolean,
+  opts?: { stroke?: boolean; fill?: string; strokeStyle?: string }
 ) {
   const pad = Math.max(6, Math.floor(Math.min(w, h) * 0.08));
   const lineGap = 1.25;
   const family =
     `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
 
-  const setFont = (size: number) => (ctx.font = `600 ${size}px ${family}`);
+  const setFont = (size: number) => {
+    ctx.font = `600 ${size}px ${family}`;
+  };
 
-  // 1) Font boyutunu kutuya sığdırana kadar küçült
+  // 1) Font boyutunu kutuya sığdır
   let fontSize = Math.max(10, Math.floor(h * 0.7));
   let lines: string[] = [];
 
@@ -354,15 +409,21 @@ function drawTextInBox(
   }
 
   // 2) Çizim
-  ctx.fillStyle = "#000";
   ctx.textBaseline = "top";
   ctx.textAlign = rtl ? "right" : "left";
   setFont(fontSize);
+
+  if (opts?.fill) ctx.fillStyle = opts.fill;
+  if (opts?.strokeStyle) ctx.strokeStyle = opts.strokeStyle;
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 2;
+  ctx.lineWidth = Math.max(0.75, fontSize * 0.08); // ince kontur
 
   const startX = rtl ? x + w - pad : x + pad;
   let cy = y + pad;
 
   for (const ln of lines) {
+    if (opts?.stroke) ctx.strokeText(ln, startX, cy);
     ctx.fillText(ln, startX, cy);
     cy += fontSize * lineGap;
     if (cy > y + h - pad) break;
@@ -407,6 +468,7 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   if (buf) out.push(buf);
   return out;
 }
+
 
 
 
