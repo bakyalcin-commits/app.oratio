@@ -4,6 +4,7 @@
 import NextImage from "next/image";
 import { useRef, useState } from "react";
 
+/* ---------- diller ---------- */
 type UiLang =
   | "English"
   | "Türkçe"
@@ -51,7 +52,6 @@ export default function Page() {
     setFile(f);
     setDownloadURL(null);
   };
-
   const openPicker = () => inputRef.current?.click();
 
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -87,7 +87,7 @@ export default function Page() {
       const data: { items: Item[] } = await res.json();
       const items = data.items ?? [];
 
-      // 2) Kaynak görseli
+      // 2) Kaynak görseli yükle
       const imgURL = URL.createObjectURL(file);
       const img = await loadImage(imgURL);
 
@@ -95,7 +95,6 @@ export default function Page() {
       const SCALE = 3;
       const cw = img.width * SCALE;
       const ch = img.height * SCALE;
-
       const canvas = canvasRef.current!;
       const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
       canvas.width = cw;
@@ -103,60 +102,52 @@ export default function Page() {
 
       ctx.imageSmoothingEnabled = true;
       (ctx as any).imageSmoothingQuality = "high";
-
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0, cw, ch);
 
-      // 4) Arka planı koruyarak sil & yaz
+      // 4) Arka yazıyı "sil" + çeviriyi yaz
       const rtl = LANG_CODE[lang] === "ar";
+
       for (const it of items) {
+        // kaynak kutu
         const bx = Math.max(0, Math.round(it.x * SCALE));
         const by = Math.max(0, Math.round(it.y * SCALE));
         const bw = Math.max(1, Math.round(it.w * SCALE));
         const bh = Math.max(1, Math.round(it.h * SCALE));
 
-        // biraz daha geniş pay: yazı tamamen kapansın
-        const pad = Math.max(3, Math.round(Math.min(bw, bh) * 0.10));
-        const ix = clamp(bx - pad, 0, cw);
-        const iy = clamp(by - pad, 0, ch);
-        const iw = clamp(bw + pad * 2, 1, cw - ix);
-        const ih = clamp(bh + pad * 2, 1, ch - iy);
+        // satırı genişlet (daha büyük yazı ve iyi kapama)
+        const M = Math.max(4, Math.round(Math.min(bw, bh) * 0.25)); // dış pay
+        const rx = clamp(bx - M, 0, cw);
+        const ry = clamp(Math.round(by - bh * 0.35) - 1, 0, ch);     // yukarı doğru genişlet
+        const rw = clamp(Math.round(bw * 1.15) + M * 2, 1, cw - rx); // yatayda %
+        const rh = clamp(Math.round(bh * 1.6) + M, 1, ch - ry);      // dikeyde %
 
-        // 4.a) iki kez hafif blur
-        blurPatch(ctx, ix, iy, iw, ih, 2);
-        blurPatch(ctx, ix, iy, iw, ih, 2);
+        // 4.a) Lokal blur ile arka yazıyı yumuşat
+        blurPatch(ctx, rx, ry, rw, rh, 2); // radius 2 (3×3)
 
-        // 4.b) ortalama renkle feathered dolgu (merkez daha opak, kenarlar yumuşar)
-        const avg = avgColor(ctx, ix, iy, iw, ih, 6);
-        featherFill(ctx, ix, iy, iw, ih, avg, 0.32, 14);
+        // 4.b) Ortalama renkle çok hafif tonda "renklendir" (dokuyu öldürmeden)
+        try {
+          const avg = averageRGB(ctx, rx, ry, rw, rh);
+          ctx.save();
+          (ctx as any).globalAlpha = 0.18; // çok hafif
+          ctx.fillStyle = `rgb(${avg.r},${avg.g},${avg.b})`;
+          ctx.fillRect(rx, ry, rw, rh);
+          ctx.restore();
+        } catch {
+          // getImageData güvenlik nedeniyle atarsa: hiç renklendirme yapma
+        }
 
-        // 4.c) koyu harf kalıntılarını biraz daha “lighten”
-        ctx.save();
-        ctx.globalAlpha = 0.10;
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(ix, iy, iw, ih);
-        ctx.restore();
-
-        // 4.d) metin (daha büyük başlayıp sığdır)
+        // 4.c) Metni yaz
         const clean = decodeHTMLEntities(it.translated || it.text);
-
-        // arka plan parlaklığına göre renk
-        const lum = 0.2126 * avg.r + 0.7152 * avg.g + 0.0722 * avg.b;
-        const fill = lum > 185 ? "#111" : "#000";
-
-        ctx.save();
-        ctx.fillStyle = fill;
-        drawTextInBox(ctx, clean, bx, by, bw, bh, rtl);
-        ctx.restore();
+        drawTextInBox(ctx, clean, rx, ry, rw, rh, rtl);
       }
 
-      // 5) indirme
+      // 5) PNG indir
       const blob = await new Promise<Blob>((resolve) =>
         canvas.toBlob((b) => resolve(b as Blob), "image/png")
       );
       const url = URL.createObjectURL(blob);
       setDownloadURL(url);
-
       URL.revokeObjectURL(imgURL);
     } catch (e: any) {
       alert(e?.message || String(e));
@@ -178,6 +169,7 @@ export default function Page() {
         padding: "48px 16px 64px",
       }}
     >
+      {/* Logo & Başlık */}
       <div style={{ width: "100%", maxWidth: 880 }}>
         <NextImage
           src="/oratio.png"
@@ -192,7 +184,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Upload */}
+      {/* Upload alanı */}
       <div
         style={{
           width: "100%",
@@ -233,7 +225,6 @@ export default function Page() {
               Click to upload or drag &amp; drop
             </div>
           </div>
-
           <input
             ref={inputRef}
             id="file"
@@ -295,7 +286,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Önizleme */}
+      {/* Önizleme Canvas */}
       <div style={{ width: "100%", maxWidth: 880 }}>
         <canvas
           ref={canvasRef}
@@ -311,7 +302,7 @@ export default function Page() {
   );
 }
 
-/* ————— helpers ————— */
+/* ---------- yardımcılar ---------- */
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -335,7 +326,105 @@ function decodeHTMLEntities(s: string) {
     .replace(/&gt;/g, ">");
 }
 
-/** Kutuyu daha dolgun dolduracak font & hafif stroke ile çizim */
+/** Patch içini 3×3 kutu blur ile yumuşatır (hızlı ve güvenli). */
+function blurPatch(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: 1 | 2 = 2
+) {
+  // sınır güvenliği
+  if (w <= 0 || h <= 0) return;
+  let img: ImageData;
+  try {
+    img = ctx.getImageData(x, y, w, h);
+  } catch {
+    return; // güvenlik engeli varsa pas
+  }
+  const data = img.data;
+  const tmp = new Uint8ClampedArray(data.length);
+
+  const rw = w | 0;
+  const rh = h | 0;
+  const kernelSize = radius === 1 ? 3 : 5; // 3×3 veya 5×5
+  const k = Math.floor(kernelSize / 2);
+
+  // yatay geçiş
+  for (let j = 0; j < rh; j++) {
+    for (let i = 0; i < rw; i++) {
+      let r = 0,
+        g = 0,
+        b = 0;
+      let c = 0;
+      for (let dx = -k; dx <= k; dx++) {
+        const ii = clamp(i + dx, 0, rw - 1);
+        const idx = (j * rw + ii) * 4;
+        r += data[idx];
+        g += data[idx + 1];
+        b += data[idx + 2];
+        c++;
+      }
+      const t = (j * rw + i) * 4;
+      tmp[t] = r / c;
+      tmp[t + 1] = g / c;
+      tmp[t + 2] = b / c;
+      tmp[t + 3] = 255;
+    }
+  }
+
+  // dikey geçiş
+  for (let j = 0; j < rh; j++) {
+    for (let i = 0; i < rw; i++) {
+      let r = 0,
+        g = 0,
+        b = 0;
+      let c = 0;
+      for (let dy = -k; dy <= k; dy++) {
+        const jj = clamp(j + dy, 0, rh - 1);
+        const idx = (jj * rw + i) * 4;
+        r += tmp[idx];
+        g += tmp[idx + 1];
+        b += tmp[idx + 2];
+        c++;
+      }
+      const t = (j * rw + i) * 4;
+      data[t] = r / c;
+      data[t + 1] = g / c;
+      data[t + 2] = b / c;
+      data[t + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, x, y);
+}
+
+/** Bölgenin ortalama rengini döndürür. */
+function averageRGB(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+) {
+  const img = ctx.getImageData(x, y, w, h);
+  const d = img.data;
+  let r = 0,
+    g = 0,
+    b = 0;
+  const step = Math.max(1, Math.floor((w * h) / 2000)); // örnekleme
+  let cnt = 0;
+  for (let i = 0; i < d.length; i += 4 * step) {
+    r += d[i];
+    g += d[i + 1];
+    b += d[i + 2];
+    cnt++;
+  }
+  return { r: Math.round(r / cnt), g: Math.round(g / cnt), b: Math.round(b / cnt) };
+}
+
+/** Metni kutuya sığacak şekilde yazar (daha büyük font için büyük kutu veriyoruz). */
 function drawTextInBox(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -345,17 +434,17 @@ function drawTextInBox(
   h: number,
   rtl: boolean
 ) {
-  const pad = Math.max(6, Math.floor(Math.min(w, h) * 0.08));
-  const lineGap = 1.22;
+  const pad = Math.max(8, Math.floor(Math.min(w, h) * 0.12));
+  const lineGap = 1.28;
   const family =
     `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial`;
   const setFont = (size: number) => (ctx.font = `600 ${size}px ${family}`);
 
-  // Daha büyükten başla, sığana kadar küçült
-  let fontSize = Math.max(16, Math.floor(h * 0.95));
+  // hedeften büyük başla, sığana kadar küçült
+  let fontSize = Math.max(12, Math.floor(h * 0.72));
   let lines: string[] = [];
 
-  while (fontSize >= 10) {
+  while (fontSize >= 11) {
     setFont(fontSize);
     lines = wrapLines(ctx, text, w - pad * 2);
     const needH = lines.length * fontSize * lineGap;
@@ -364,19 +453,14 @@ function drawTextInBox(
     fontSize -= 1;
   }
 
+  ctx.fillStyle = "#000";
   ctx.textBaseline = "top";
   ctx.textAlign = rtl ? "right" : "left";
   setFont(fontSize);
 
   const startX = rtl ? x + w - pad : x + pad;
   let cy = y + pad;
-
-  // okunabilirlik için hafif stroke
-  ctx.lineWidth = Math.max(1, Math.floor(fontSize * 0.08));
-  ctx.strokeStyle = "rgba(255,255,255,0.60)";
-
   for (const ln of lines) {
-    ctx.strokeText(ln, startX, cy);
     ctx.fillText(ln, startX, cy);
     cy += fontSize * lineGap;
     if (cy > y + h - pad) break;
@@ -421,107 +505,3 @@ function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: nu
   if (buf) out.push(buf);
   return out;
 }
-
-/* ---------- yeni: blur + feather dolgu + ortalama renk ---------- */
-
-function blurPatch(
-  ctx: CanvasRenderingContext2D,
-  sx: number,
-  sy: number,
-  sw: number,
-  sh: number,
-  radiusPx: number
-) {
-  const tmp = document.createElement("canvas");
-  tmp.width = Math.max(1, Math.round(sw));
-  tmp.height = Math.max(1, Math.round(sh));
-  const tctx = tmp.getContext("2d") as CanvasRenderingContext2D;
-
-  tctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, tmp.width, tmp.height);
-  (tctx as any).filter = `blur(${radiusPx}px)`;
-  tctx.drawImage(tmp, 0, 0);
-  ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, sx, sy, sw, sh);
-}
-
-function avgColor(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  step = 4
-) {
-  const data = ctx.getImageData(x, y, w, h).data;
-  let r = 0, g = 0, b = 0, n = 0;
-  for (let j = 0; j < h; j += step) {
-    for (let i = 0; i < w; i += step) {
-      const idx = ((j * w) + i) * 4;
-      r += data[idx];
-      g += data[idx + 1];
-      b += data[idx + 2];
-      n++;
-    }
-  }
-  if (n === 0) return { r: 255, g: 255, b: 255 };
-  return { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) };
-}
-
-function featherFill(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  col: { r: number; g: number; b: number },
-  alphaCenter = 0.32,
-  feather = 12
-) {
-  const rgb = (a: number) => `rgba(${col.r},${col.g},${col.b},${a})`;
-  ctx.save();
-
-  // merkez
-  ctx.globalAlpha = alphaCenter;
-  ctx.fillStyle = rgb(1);
-  ctx.fillRect(x, y, w, h);
-
-  // kenarlar (yumuşak geçiş)
-  const l = ctx.createLinearGradient(x, y, x + feather, y);
-  l.addColorStop(0, rgb(alphaCenter));
-  l.addColorStop(1, rgb(0));
-  ctx.fillStyle = l;
-  ctx.fillRect(x, y, feather, h);
-
-  const r = ctx.createLinearGradient(x + w - feather, y, x + w, y);
-  r.addColorStop(0, rgb(0));
-  r.addColorStop(1, rgb(alphaCenter));
-  ctx.fillStyle = r;
-  ctx.fillRect(x + w - feather, y, feather, h);
-
-  const t = ctx.createLinearGradient(x, y, x, y + feather);
-  t.addColorStop(0, rgb(alphaCenter));
-  t.addColorStop(1, rgb(0));
-  ctx.fillStyle = t;
-  ctx.fillRect(x, y, w, feather);
-
-  const b = ctx.createLinearGradient(x, y + h - feather, x, y + h);
-  b.addColorStop(0, rgb(0));
-  b.addColorStop(1, rgb(alphaCenter));
-  ctx.fillStyle = b;
-  ctx.fillRect(x, y + h - feather, w, feather);
-
-  ctx.restore();
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
